@@ -8,7 +8,7 @@ $ScriptPath = $MyInvocation.MyCommand.Path
 $HomeDir = [Environment]::GetFolderPath("UserProfile")
 $RepoDir = $PSScriptRoot
 $TrackedFilesDir = Join-Path $RepoDir "tracked_files"
-$FailureLog = Join-Path $RepoDir "failure.log"
+$LogFile = Join-Path $RepoDir "track.log"
 
 # Make sure the tracked files directory exists
 if (-not (Test-Path $TrackedFilesDir)) {
@@ -123,6 +123,9 @@ try {
 
     Write-Host "Tracking complete."
 
+    # Log success
+    $successMessage = "[$(Get-Date)] SUCCESS: Tracking completed successfully."
+    Add-Content -Path $LogFile -Value $successMessage
 
     # Toast notification for success
     [System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms') | Out-Null
@@ -140,7 +143,7 @@ try {
 }
 catch {
     $errorMessage = "[$(Get-Date)] ERROR: $_"
-    Add-Content -Path $FailureLog -Value $errorMessage
+    Add-Content -Path $LogFile -Value $errorMessage
 
     # Notification (minimal disruption)
     [System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms') | Out-Null

@@ -18,7 +18,8 @@ if (-not (Test-Path (Join-Path $RepoDir ".git"))) {
 # Register Scheduled Task (every 4 hours, fixed window)
 $Action = New-ScheduledTaskAction `
     -Execute "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" `
-    -Argument "-ExecutionPolicy Bypass -File `"$ScriptPath`""
+    # Minimized, not hidden. See: https://github.com/PowerShell/PowerShell/issues/3028
+    -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$ScriptPath`""
 
 # Trigger 1: Every 4 hours starting at the next full 4-hour block
 $now = Get-Date
