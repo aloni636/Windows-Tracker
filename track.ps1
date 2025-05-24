@@ -90,6 +90,15 @@ try {
     Write-Host "Done."
 
 
+    # Export Microsoft Store apps
+    Write-Host -NoNewline "[Microsoft Store] Exporting installed apps... "
+    
+    $MicrosoftStorePath = Join-Path $TrackedFilesDir "microsoft_store_apps.csv"
+    Get-AppxPackage | Select-Object Name, Version, Publisher | Export-Csv -Path $MicrosoftStorePath -NoTypeInformation
+
+    Write-Host "Done."
+
+
     # Push changes to Github
     Set-Location $RepoDir
     
