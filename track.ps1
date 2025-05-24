@@ -4,6 +4,7 @@
 
 
 $Now = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
+$ScriptPath = $MyInvocation.MyCommand.Path
 $HomeDir = [Environment]::GetFolderPath("UserProfile")
 $RepoDir = $PSScriptRoot
 $TrackedFilesDir = Join-Path $RepoDir "tracked_files"
@@ -109,13 +110,20 @@ try {
     }
     #>
 
-    <#
-    # Git commit and push
     Set-Location $RepoDir
-    git add .
-    git commit -m "Auto snapshot $Now"
+    
+    $modifiedFilesCount = (git status --porcelain --untracked-files=all | select-String -Pattern '^[^?]+' | Measure-Object).Count
+    $untrackedFilesCount = (git status --porcelain --untracked-files=all | select-String -Pattern '^\?\?' | Measure-Object).Count
+
+    git add $FailureLog
+    git add $TrackedFilesDir
+    
+    $stagingFilesCount = (git diff --cached --name-only | Measure-Object).Count
+
+    
+    # get the number of changed files and untracked files expanding untracked directories
+    git commit -m "Scheduled snapshot of tracked files at $Now"
     git push origin main
-    #>
 
     Write-Host "Tracking complete."
 
@@ -124,7 +132,8 @@ try {
     $toast = New-Object System.Windows.Forms.NotifyIcon
     $toast.Icon = [System.Drawing.SystemIcons]::Information
     $toast.BalloonTipTitle = "Tracking Script Succeeded"
-    $toast.BalloonTipText = "Tracking completed successfully."
+    $nextRun = (Get-Date).AddHours(4)
+    $toast.BalloonTipText = "${modifiedFilesCount} modified, ${untrackedFilesCount} untracked, ${stagingFilesCount} to push.\nNext run: $($nextRun.ToString('yyyy-MM-dd HH:mm'))"
     $toast.BalloonTipIcon = [System.Windows.Forms.ToolTipIcon]::Info
     $toast.Visible = $true
     $toast.ShowBalloonTip(10000)
@@ -145,3 +154,10 @@ catch {
 
     Write-Warning "Tracking script failed: $_"
 }
+
+# Always schedule next run in 4 hours
+$taskName = 'Track System Every 4 Hours From Last Run'
+$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-ExecutionPolicy Bypass -File `"$ScriptPath`""
+$trigger = New-ScheduledTaskTrigger -Once -At ((Get-Date).AddHours(4))
+$principal = New-ScheduledTaskPrincipal -UserId "$env:USERNAME" -LogonType S4U -RunLevel Highest
+Register-ScheduledTask -Action $action -Trigger $trigger -Principal $principal -TaskName $taskName -Description 'Track system information every 4 hours from last run' -Force
