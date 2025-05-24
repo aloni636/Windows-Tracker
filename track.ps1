@@ -85,7 +85,10 @@ try {
     Write-Host -NoNewline "[PowerShell Gallery] Exporting installed modules... "
     
     $PsGalleryPath = Join-Path $TrackedFilesDir "ps_gallery_modules.csv"
-    Get-InstalledModule | Select-Object Name, Version, Repository | Export-Csv -Path $PsGalleryPath -NoTypeInformation
+    Get-InstalledModule |
+        Select-Object Name, Version, Repository |
+        Sort-Object Name, Version |
+        Export-Csv -Path $PsGalleryPath -NoTypeInformation
     
     Write-Host "Done."
 
@@ -94,7 +97,10 @@ try {
     Write-Host -NoNewline "[Microsoft Store] Exporting installed apps... "
     
     $MicrosoftStorePath = Join-Path $TrackedFilesDir "microsoft_store_apps.csv"
-    Get-AppxPackage | Select-Object Name, Version, Publisher, IsDevelopmentMode, NonRemovable | Export-Csv -Path $MicrosoftStorePath -NoTypeInformation
+    Get-AppxPackage |
+        Select-Object Name, Version, Publisher, IsDevelopmentMode, NonRemovable |
+        Sort-Object Name, Publisher, Version |
+        Export-Csv -Path $MicrosoftStorePath -NoTypeInformation
 
     Write-Host "Done."
 
