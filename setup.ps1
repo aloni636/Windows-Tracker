@@ -16,7 +16,9 @@ if (-not (Test-Path (Join-Path $RepoDir ".git"))) {
 }
 
 # Register Scheduled Task (every 4 hours, fixed window)
-$Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -File `\"$ScriptPath`\""
+$Action = New-ScheduledTaskAction `
+    -Execute "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" `
+    -Argument "-ExecutionPolicy Bypass -File `"$ScriptPath`""
 
 # Trigger 1: Every 4 hours starting at the next full 4-hour block
 $now = Get-Date
@@ -40,4 +42,15 @@ Register-ScheduledTask -Action $Action `
     -Description "Track system info every 4 hours and at logon (non-admin)" `
     -Force
 
-Write-Host "Setup completed at ${RepoDir}. Scheduled task 'Track System' (every 4 hours, fixed windows) created."
+Write-Host @"
+
+Setup completed at ${RepoDir} with 'Track System' task scheduled to run every 4 hours and at logon.
+
+To execute the task manually, run:
+    Start-ScheduledTask -TaskName 'Track System'
+
+To examine the task, run:
+    Get-ScheduledTask -TaskName 'Track System' | Get-ScheduledTaskInfo
+"@
+
+# Write-Host "Setup completed at ${RepoDir}. Scheduled task 'Track System' (every 4 hours, fixed windows) created."
