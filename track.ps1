@@ -66,8 +66,8 @@ try {
             HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*, `
             HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\* |
         Where-Object { $_.DisplayName } |
-        Select-Object DisplayName, DisplayVersion, Publisher, InstallDate |
-        Sort-Object DisplayName |
+        # Select-Object DisplayName, DisplayVersion, Publisher, InstallDate |
+        Sort-Object Publisher, DisplayName |
         Export-Csv -Path $InstalledProgramsPath -NoTypeInformation -Encoding UTF8
     write-Host "Done."
 
@@ -96,12 +96,27 @@ try {
     $modifiedFilesCount = (git status --porcelain --untracked-files=all | select-String -Pattern '^[^?]+' | Measure-Object).Count
     $untrackedFilesCount = (git status --porcelain --untracked-files=all | select-String -Pattern '^\?\?' | Measure-Object).Count
 
-    git add $FailureLog
     git add $TrackedFilesDir
     
+    $diff = git diff --cached $WingetExportPath
+    # Check if the diff ONLY touches CreationDate
+    if ($diff -match '^\+\s*"CreationDate"\s*:\s*".*?"\s*,\s*$' -and
+        $diff -match '^\-\s*"CreationDate"\s*:\s*".*?"\s*,\s*$' -and
+        ($diff -replace '(\+\s*"CreationDate".*|\-\s*"CreationDate".*)', '').Trim() -eq '') {
+
+        Write-Output "Skipping winget_export.json: Only CreationDate changed"
+
+        # Unstage the file
+        git restore --staged $WingetExportPath
+
+        # Optionally revert the file to match HEAD
+        git restore $WingetExportPath
+    }
+
+
+
     $stagingFilesCount = (git diff --cached --name-only | Measure-Object).Count
 
-    
     # get the number of changed files and untracked files expanding untracked directories
     git commit -m "Scheduled tracking at $Now"
     git push origin main
@@ -118,7 +133,7 @@ try {
     $now = Get-Date
     $nextRun = $now.Date.AddHours(4 * [math]::Ceiling($now.Hour / 4))
     if ($nextRun -le $now) { $nextRun = $nextRun.AddHours(4) }
-    $toast.BalloonTipText = "${modifiedFilesCount} modified, ${untrackedFilesCount} untracked, ${stagingFilesCount} to push.`nNext run: $($nextRun.ToString('yyyy-MM-dd HH:mm'))"
+    $toast.BalloonTipText = "${stagingFilesCount} to push (${modifiedFilesCount} modified, ${untrackedFilesCount} untracked)`nNext run: $($nextRun.ToString('yyyy-MM-dd HH:mm'))"
     $toast.BalloonTipIcon = [System.Windows.Forms.ToolTipIcon]::Info
     $toast.Visible = $true
     $toast.ShowBalloonTip(10000)
