@@ -18,8 +18,9 @@ if (-not (Test-Path (Join-Path $RepoDir ".git"))) {
 # Register Scheduled Task (every 4 hours, fixed window)
 $Action = New-ScheduledTaskAction `
     -Execute "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" `
-    # Minimized, not hidden. See: https://github.com/PowerShell/PowerShell/issues/3028
     -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$ScriptPath`""
+    # -WindowStyle Hidden is actually minimized window, not hidden.
+    # See: https://github.com/PowerShell/PowerShell/issues/3028
 
 # Trigger 1: Every 4 hours starting at the next full 4-hour block
 $now = Get-Date
@@ -35,10 +36,18 @@ $Trigger2 = New-ScheduledTaskTrigger -AtLogOn
 # Simpler principal (non-elevated, uses interactive logon)
 $Principal = New-ScheduledTaskPrincipal -UserId "$env:USERNAME" -LogonType Interactive
 
+# Task settings
+# - Start when available: If the task is missed (for example, when keeping the computer in sleep mode), it will run as soon as I wake it up.
+# - Execution time limit: 3 minutes to prevent track.ps1 from running indefinitely in case of issues.
+$Settings = New-ScheduledTaskSettingsSet `
+    -StartWhenAvailable `
+    -ExecutionTimeLimit (New-TimeSpan -Minutes 3)
+
 # Register the task
 Register-ScheduledTask -Action $Action `
     -Trigger @($Trigger1, $Trigger2) `
     -Principal $Principal `
+    -Settings $Settings `
     -TaskName "Track System" `
     -Description "Track system info every 4 hours and at logon (non-admin)" `
     -Force
@@ -53,5 +62,3 @@ To execute the task manually, run:
 To examine the task, run:
     Get-ScheduledTask -TaskName 'Track System' | Get-ScheduledTaskInfo
 "@
-
-# Write-Host "Setup completed at ${RepoDir}. Scheduled task 'Track System' (every 4 hours, fixed windows) created."
