@@ -66,7 +66,7 @@ try {
             HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*, `
             HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\* |
         Where-Object { $_.DisplayName } |
-        # Select-Object DisplayName, DisplayVersion, Publisher, InstallDate |
+        Select-Object DisplayName, DisplayVersion, Publisher, InstallDate |
         Sort-Object Publisher, DisplayName |
         Export-Csv -Path $InstalledProgramsPath -NoTypeInformation -Encoding UTF8
     write-Host "Done."

@@ -1,6 +1,6 @@
 # Elevation check: Relaunch as admin if not already
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Write-Host "Script is not running as administrator. Relaunching with sudo..."
+    Write-Host "Script requires admin to register tasks to the scheduler. Relaunching with sudo..."
     sudo powershell -ExecutionPolicy Bypass -File $MyInvocation.MyCommand.Path
     exit
 }
@@ -40,8 +40,4 @@ Register-ScheduledTask -Action $Action `
     -Description "Track system info every 4 hours and at logon (non-admin)" `
     -Force
 
-# Ignition: run track.ps1 once to schedule the first 4-hour run
-Write-Host "Running ignition execution of track.ps1 to schedule first 4-hour run..."
-powershell.exe -ExecutionPolicy Bypass -File "$ScriptPath"
-
-Write-Host "Setup completed at $RepoDir. Scheduled task 'Track System' (every 4 hours, fixed windows) created."
+Write-Host "Setup completed at ${RepoDir}. Scheduled task 'Track System' (every 4 hours, fixed windows) created."
