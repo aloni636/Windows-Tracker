@@ -18,17 +18,26 @@ if (-not (Test-Path (Join-Path $RepoDir ".git"))) {
 # Register Scheduled Task (every 4 hours, fixed window)
 $Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -File `\"$ScriptPath`\""
 
-$Trigger = New-ScheduledTaskTrigger `
-    -Once `
-    -At (Get-Date).Date.AddMinutes(1) `
+# Trigger 1: Every 4 hours starting at the next full 4-hour block
+$now = Get-Date
+$nextBlock = $now.Date.AddHours(4 * [math]::Ceiling($now.Hour / 4))
+$Trigger1 = New-ScheduledTaskTrigger `
+    -Once -At $nextBlock `
     -RepetitionInterval (New-TimeSpan -Hours 4) `
-    -RepetitionDuration ([TimeSpan]::FromDays(365))  # Or use [TimeSpan]::MaxValue
+    -RepetitionDuration ([TimeSpan]::FromDays(365))
 
-$Principal = New-ScheduledTaskPrincipal -UserId "$env:USERNAME" -LogonType S4U -RunLevel Highest
+# Trigger 2: At logon
+$Trigger2 = New-ScheduledTaskTrigger -AtLogOn
 
-Register-ScheduledTask -Action $Action -Trigger $Trigger -Principal $Principal `
+# Simpler principal (non-elevated, uses interactive logon)
+$Principal = New-ScheduledTaskPrincipal -UserId "$env:USERNAME" -LogonType Interactive
+
+# Register the task
+Register-ScheduledTask -Action $Action `
+    -Trigger @($Trigger1, $Trigger2) `
+    -Principal $Principal `
     -TaskName "Track System" `
-    -Description "Track system information every 4 hours" `
+    -Description "Track system info every 4 hours and at logon (non-admin)" `
     -Force
 
 # Ignition: run track.ps1 once to schedule the first 4-hour run
