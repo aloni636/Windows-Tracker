@@ -1,71 +1,94 @@
 # This script tracks browser bookmarks, installed apps, and file metadata.
 
+# Conventions: snake_case for filenames
+
+
 $Now = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
 $HomeDir = [Environment]::GetFolderPath("UserProfile")
-$RepoDir = Join-Path $HomeDir "Documents\TrackedData"
-$TrackedFilesDir = Join-Path $RepoDir "files"
-# $MetadataPath = Join-Path $RepoDir "file_metadata.json"
+$RepoDir = $PSScriptRoot
+$TrackedFilesDir = Join-Path $RepoDir "tracked_files"
 $FailureLog = Join-Path $RepoDir "failure.log"
 
+# Make sure the tracked files directory exists
+if (-not (Test-Path $TrackedFilesDir)) {
+    Write-Host -NoNewline "Creating tracked files directory..."
+    New-Item -Path $TrackedFilesDir -ItemType Directory -Force | Out-Null
+    Write-Host "Done."
+}
+
 try {
-    # $FileMetadata = @{}
-
-    # Define files to track
-    $Chromium = @{
-        "ChromeBookmarks" = Join-Path $HomeDir "AppData\Local\Google\Chrome\User Data\Default\Bookmarks"
-        "EdgeBookmarks"   = Join-Path $HomeDir "AppData\Local\Microsoft\Edge\User Data\Default\Bookmarks"
-    }
-    $Firefox = Join-Path $HomeDir "AppData\Roaming\Mozilla\Firefox\Profiles"
-
-    # Helper function to record metadata
-    <#
-    function Add-Metadata($path) {
-        if (Test-Path $path) {
-            $info = Get-Item $path
-            $script:FileMetadata[$path] = [PSCustomObject]@{
-                Name          = $info.Name
-                OriginalPath  = $path
-                LastWriteTime = $info.LastWriteTime
-                CreationTime  = $info.CreationTime
-                Length        = $info.Length
-            }
-        }
-    }
-    #>
-
     # Copy firefox bookmarks
     # Note: Firefox stores bookmarks in a SQLite database
+    Write-Host -NoNewline "[Firefox] Copying bookmarks... "
+    
+    $Firefox = Join-Path $HomeDir "AppData\Roaming\Mozilla\Firefox\Profiles"
     if (Test-Path $Firefox) {
         Get-ChildItem -Path $Firefox -Recurse -Filter "places.sqlite" | ForEach-Object {
             $profileName = Split-Path $_.Directory.Name -Leaf
-            $dst = Join-Path $TrackedFilesDir ("$profileName\_places.sqlite")
+            $dst = Join-Path $TrackedFilesDir ("firefox_${profileName}_places.sqlite")
             Copy-Item -Force $_.FullName $dst
-            # Add-Metadata $dst
         }
     }
-
-    # Copy Chromium bookmarks
-    foreach ($key in $Chromium.Keys) {
-        $src = $Chromium[$key]
-
-        if (Test-Path $src) {
-            $dst = Join-Path $TrackedFilesDir "$key.json"
-            Copy-Item -Force -Path $src -Destination $dst
-            # Add-Metadata $dst
+    
+    Write-Host "Done."
+    
+    
+    # Copy Chromium bookmarks (all profiles)
+    Write-Host -NoNewline "[Chromium] Copying bookmarks from all profiles... "
+    
+    $ChromiumBrowsers = @{
+        "chrome" = Join-Path $HomeDir "AppData\Local\Google\Chrome\User Data"
+        "edge"   = Join-Path $HomeDir "AppData\Local\Microsoft\Edge\User Data"
+    }
+    foreach ($browser in $ChromiumBrowsers.Keys) {
+        $browserPath = $ChromiumBrowsers[$browser]
+        if (Test-Path $browserPath) {
+            Get-ChildItem -Path $browserPath -Directory | Where-Object { $_.Name -match '^(Default|Profile \\d+)$' } | ForEach-Object {
+                $profileName = $_.Name
+                $bookmarkPath = Join-Path $_.FullName "bookmarks"
+                if (Test-Path $bookmarkPath) {
+                    $dst = Join-Path $TrackedFilesDir ("${browser}_${profileName}_bookmarks.json")
+                    Copy-Item -Force -Path $bookmarkPath -Destination $dst
+                }
+            }
         }
     }
+    
+    Write-Host "Done."
 
-    # Export installed Winget apps (constant filename)
-    $WingetPath = Join-Path $RepoDir "winget_list.txt"
-    winget list | Set-Content $WingetPath
-    # Add-Metadata $WingetPath
+    
+    # Export installed programs
+    Write-Host -NoNewline "[Registry] Exporting installed programs... "
 
-    # Export PowerShell Gallery modules (constant filename)
-    $PsGalleryPath = Join-Path $RepoDir "psgallery_modules.csv"
+    $InstalledProgramsPath = Join-Path $TrackedFilesDir "installed_programs.csv"
+    Get-ItemProperty HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*, `
+            HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*, `
+            HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\* |
+        Where-Object { $_.DisplayName } |
+        Select-Object DisplayName, DisplayVersion, Publisher, InstallDate |
+        Sort-Object DisplayName |
+        Export-Csv -Path $InstalledProgramsPath -NoTypeInformation -Encoding UTF8
+    write-Host "Done."
+
+    
+    # Export installed Winget apps
+    Write-Host -NoNewline "[Winget] Exporting installed apps... "
+
+    $WingetExportPath = Join-Path $TrackedFilesDir "winget_export.json"
+    winget export --output $WingetExportPath 
+    
+    Write-Host "Done."
+
+    
+    # Export PowerShell Gallery modules
+    Write-Host -NoNewline "[PowerShell Gallery] Exporting installed modules... "
+    
+    $PsGalleryPath = Join-Path $TrackedFilesDir "ps_gallery_modules.csv"
     Get-InstalledModule | Select-Object Name, Version, Repository | Export-Csv -Path $PsGalleryPath -NoTypeInformation
-    # Add-Metadata $PsGalleryPath
+    
+    Write-Host "Done."
 
-    # Export installed programs from registry (constant filename)
+    # Export installed programs from registry
     <#
     $RegistryPaths = @(
         "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall",
@@ -83,18 +106,16 @@ try {
     }
     if ($apps.Count -gt 0) {
         $apps | Export-Csv -Path $AppsPath -NoTypeInformation
-        # Add-Metadata $AppsPath
     }
-    
-    # Save all collected metadata once per run
-    $FileMetadata.Values | ConvertTo-Json -Depth 4 | Set-Content -Path $MetadataPath -Encoding UTF8
     #>
 
+    <#
     # Git commit and push
     Set-Location $RepoDir
     git add .
     git commit -m "Auto snapshot $Now"
     git push origin main
+    #>
 
     Write-Host "Tracking complete."
 
