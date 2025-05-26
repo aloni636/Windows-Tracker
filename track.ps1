@@ -112,6 +112,33 @@ try {
     Write-Host "Done."
 
 
+    # Copy PowerShell $PROFILE scripts (all scopes)
+    Write-Host -NoNewline "[PowerShell] Copying CurrentUserAllHosts profile script... "
+    $profilePath = $PROFILE.CurrentUserAllHosts
+    if (Test-Path $profilePath) {
+        $dst = Join-Path $TrackedFilesDir (Split-Path $profilePath -Leaf)
+        Copy-Item -Force $profilePath $dst
+    }
+    Write-Host "Done."
+
+    # Copy global git config
+    Write-Host -NoNewline "[Git] Copying global git config... "
+    $gitConfigPath = Join-Path $HomeDir ".gitconfig"
+    if (Test-Path $gitConfigPath) {
+        $dst = Join-Path $TrackedFilesDir ".gitconfig"
+        Copy-Item -Force $gitConfigPath $dst
+    }
+    Write-Host "Done."
+
+    # Copy .gource-config if it exists
+    Write-Host -NoNewline "[Gource] Copying .gource-config... "
+    $gourceConfigPath = Join-Path $HomeDir ".gource-config"
+    if (Test-Path $gourceConfigPath) {
+        $dst = Join-Path $TrackedFilesDir ".gource-config"
+        Copy-Item -Force $gourceConfigPath $dst
+    }
+    Write-Host "Done."
+
     # Push changes to Github
     Set-Location $RepoDir
     
