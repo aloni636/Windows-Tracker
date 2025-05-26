@@ -4,7 +4,6 @@
 
 
 $Now = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
-$ScriptPath = $MyInvocation.MyCommand.Path
 $HomeDir = [Environment]::GetFolderPath("UserProfile")
 $RepoDir = $PSScriptRoot
 $TrackedFilesDir = Join-Path $RepoDir "tracked_files"
@@ -49,7 +48,10 @@ try {
                 $bookmarkPath = Join-Path $_.FullName "bookmarks"
                 if (Test-Path $bookmarkPath) {
                     $dst = Join-Path $TrackedFilesDir ("${browser}_${profileName}_bookmarks.json")
-                    Copy-Item -Force -Path $bookmarkPath -Destination $dst
+                    # Redact sync metadata from bookmarks JSON file
+                    Get-Content $bookmarkPath | ForEach-Object {
+                        $_ -replace '("sync_metadata"\s*:\s*)".*?"', '$1"[redacted]"'
+                    } | Set-Content $dst -Encoding UTF8
                 }
             }
         }
@@ -58,17 +60,19 @@ try {
     Write-Host "Done."
 
     
-    # Export installed programs
+    # Export installed programs (sorted by all properties for guaranteed consistency)
     Write-Host -NoNewline "[Registry] Exporting installed programs... "
 
     $InstalledProgramsPath = Join-Path $TrackedFilesDir "installed_programs.csv"
+    $InstalledProgramsProperties = @("DisplayName", "DisplayVersion", "Publisher", "InstallDate")
     Get-ItemProperty HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*, `
             HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*, `
-            HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\* |
+            HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*  |
         Where-Object { $_.DisplayName } |
-        Select-Object DisplayName, DisplayVersion, Publisher, InstallDate |
-        Sort-Object Publisher, DisplayName |
+        Select-Object $InstalledProgramsProperties |
+        Sort-Object -Property $InstalledProgramsProperties |
         Export-Csv -Path $InstalledProgramsPath -NoTypeInformation -Encoding UTF8
+    
     write-Host "Done."
 
     
@@ -81,36 +85,36 @@ try {
     Write-Host "Done."
 
     
-    # Export PowerShell Gallery modules
+    # Export PowerShell Gallery modules (sorted by all properties for guaranteed consistency)
     Write-Host -NoNewline "[PowerShell Gallery] Exporting installed modules... "
-    
+
     $PsGalleryPath = Join-Path $TrackedFilesDir "ps_gallery_modules.csv"
+    $PsGalleryProperties = @("Name", "Version", "Repository")
+    # Sort by all properties to ensure consistent output
     Get-InstalledModule |
-        Select-Object Name, Version, Repository |
-        Sort-Object Name, Version |
+        Select-Object $PsGalleryProperties |
+        Sort-Object -Property $PsGalleryProperties |
         Export-Csv -Path $PsGalleryPath -NoTypeInformation
     
     Write-Host "Done."
 
 
-    # Export Microsoft Store apps
+    # Export Microsoft Store apps (sorted by all properties for guaranteed consistency)
     Write-Host -NoNewline "[Microsoft Store] Exporting installed apps... "
     
     $MicrosoftStorePath = Join-Path $TrackedFilesDir "microsoft_store_apps.csv"
+    $MicrosoftStoreProperties = @("Name", "Version", "Publisher", "IsDevelopmentMode", "NonRemovable")
     Get-AppxPackage |
-        Select-Object Name, Version, Publisher, IsDevelopmentMode, NonRemovable |
-        Sort-Object Name, Publisher, Version |
+        Select-Object $MicrosoftStoreProperties |
+        Sort-Object -Property $MicrosoftStoreProperties |
         Export-Csv -Path $MicrosoftStorePath -NoTypeInformation
-
+    
     Write-Host "Done."
 
 
     # Push changes to Github
     Set-Location $RepoDir
     
-    $modifiedFilesCount = (git status --porcelain --untracked-files=all | select-String -Pattern '^[^?]+' | Measure-Object).Count
-    $untrackedFilesCount = (git status --porcelain --untracked-files=all | select-String -Pattern '^\?\?' | Measure-Object).Count
-
     git add $TrackedFilesDir
     
     $diff = git diff --cached $WingetExportPath
@@ -129,7 +133,20 @@ try {
     }
 
 
-
+    # Get the number of modified files and untracked files in the staging area:
+    # | Letter | Meaning                                         |
+    # | ------ | ----------------------------------------------- |
+    # | `A`    | Added (new files)                               |
+    # | `C`    | Copied                                          |
+    # | `D`    | Deleted                                         |
+    # | `M`    | Modified                                        |
+    # | `R`    | Renamed                                         |
+    # | `T`    | Type changed (e.g., file <-> symlink)           |
+    # | `U`    | Unmerged (conflicts)                            |
+    # | `X`    | Unknown (e.g., not tracked in the index)        |
+    # | `B`    | Broken pairing (used for rename/copy detection) |
+    $modifiedFilesCount = (git diff --cached --name-only --diff-filter=M | Measure-Object).Count
+    $untrackedFilesCount = (git diff --cached --name-only --diff-filter=A | Measure-Object).Count
     $stagingFilesCount = (git diff --cached --name-only | Measure-Object).Count
 
     # get the number of changed files and untracked files expanding untracked directories
@@ -151,7 +168,13 @@ try {
     $now = Get-Date
     $nextRun = $now.Date.AddHours(4 * [math]::Ceiling($now.Hour / 4))
     if ($nextRun -le $now) { $nextRun = $nextRun.AddHours(4) }
-    $toast.BalloonTipText = "${stagingFilesCount} to push (${modifiedFilesCount} modified, ${untrackedFilesCount} untracked)`nNext run: $($nextRun.ToString('yyyy-MM-dd HH:mm'))"
+    $toast.BalloonTipText = $(
+        if ($stagingFilesCount -eq 0) {
+            "No changes to push."
+        } else {
+            "$stagingFilesCount to push ($modifiedFilesCount modified, $untrackedFilesCount untracked)"
+        }
+    ) + "`nNext run: $($nextRun.ToString('dd/MM/yyyy H:mm'))"
     $toast.BalloonTipIcon = [System.Windows.Forms.ToolTipIcon]::Info
     $toast.Visible = $true
     $toast.ShowBalloonTip(10000)
