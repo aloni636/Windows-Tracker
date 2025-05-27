@@ -49,7 +49,7 @@ try {
                 if (Test-Path $bookmarkPath) {
                     $dst = Join-Path $TrackedFilesDir ("${browser}_${profileName}_bookmarks.json")
                     # Redact sync metadata from bookmarks JSON file
-                    Get-Content $bookmarkPath | ForEach-Object {
+                    Get-Content $bookmarkPath -Encoding UTF8 | ForEach-Object {
                         $_ -replace '("sync_metadata"\s*:\s*)".*?"', '$1"[redacted]"'
                     } | Set-Content $dst -Encoding UTF8
                 }
