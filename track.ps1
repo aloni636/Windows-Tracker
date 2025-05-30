@@ -6,11 +6,14 @@ param(
     [switch]$DisableGit
 )
 
-$Now = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
 $HomeDir = [Environment]::GetFolderPath("UserProfile")
 $RepoDir = $PSScriptRoot
 $TrackedFilesDir = Join-Path $RepoDir "tracked_files"
 $LogFile = Join-Path $RepoDir "track.log"
+
+$now = Get-Date
+$NowIso = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
+$NowLog = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 
 # Make sure the tracked files directory exists
 if (-not (Test-Path $TrackedFilesDir)) {
@@ -173,87 +176,118 @@ try {
     # Push changes to Github
     if ($DisableGit) {
         Write-Host "Git operations are disabled. Skipping commit and push."
-        return
-    }
-    Set-Location $RepoDir
-    
-    git add $TrackedFilesDir
-    
-    $diff = git diff --cached $WingetExportPath
-    # Check if the diff ONLY touches CreationDate
-    if ($diff -match '^\+\s*"CreationDate"\s*:\s*".*?"\s*,\s*$' -and
+    } else {
+        Set-Location $RepoDir
+        
+        git add $TrackedFilesDir
+        
+        $diff = git diff --cached $WingetExportPath
+        # Check if the diff ONLY touches CreationDate
+        if ($diff -match '^\+\s*"CreationDate"\s*:\s*".*?"\s*,\s*$' -and
         $diff -match '^\-\s*"CreationDate"\s*:\s*".*?"\s*,\s*$' -and
         ($diff -replace '(\+\s*"CreationDate".*|\-\s*"CreationDate".*)', '').Trim() -eq '') {
+            
+            Write-Output "Skipping winget_export.json: Only CreationDate changed"
+            
+            # Unstage the file
+            git restore --staged $WingetExportPath
+            
+            # Optionally revert the file to match HEAD
+            git restore $WingetExportPath
+        }
+        
+        
+        # Get the number of modified files and untracked files in the staging area:
+        # | Letter | Meaning                                         |
+        # | ------ | ----------------------------------------------- |
+        # | `A`    | Added (new files)                               |
+        # | `C`    | Copied                                          |
+        # | `D`    | Deleted                                         |
+        # | `M`    | Modified                                        |
+        # | `R`    | Renamed                                         |
+        # | `T`    | Type changed (e.g., file <-> symlink)           |
+        # | `U`    | Unmerged (conflicts)                            |
+        # | `X`    | Unknown (e.g., not tracked in the index)        |
+        # | `B`    | Broken pairing (used for rename/copy detection) |
+        $modifiedFilesCount = (git diff --cached --name-only --diff-filter=M | Measure-Object).Count
+        $untrackedFilesCount = (git diff --cached --name-only --diff-filter=A | Measure-Object).Count
+        $stagingFilesCount = (git diff --cached --name-only | Measure-Object).Count
+        
+        # get the number of changed files and untracked files expanding untracked directories
+        git commit -m "Scheduled tracking at $NowIso"
+        git push origin main
 
-        Write-Output "Skipping winget_export.json: Only CreationDate changed"
-
-        # Unstage the file
-        git restore --staged $WingetExportPath
-
-        # Optionally revert the file to match HEAD
-        git restore $WingetExportPath
+        # Log success
+        $successMessage = "[$NowLog] SUCCESS: Tracking completed successfully."
+        Add-Content -Path $LogFile -Value $successMessage
     }
 
-
-    # Get the number of modified files and untracked files in the staging area:
-    # | Letter | Meaning                                         |
-    # | ------ | ----------------------------------------------- |
-    # | `A`    | Added (new files)                               |
-    # | `C`    | Copied                                          |
-    # | `D`    | Deleted                                         |
-    # | `M`    | Modified                                        |
-    # | `R`    | Renamed                                         |
-    # | `T`    | Type changed (e.g., file <-> symlink)           |
-    # | `U`    | Unmerged (conflicts)                            |
-    # | `X`    | Unknown (e.g., not tracked in the index)        |
-    # | `B`    | Broken pairing (used for rename/copy detection) |
-    $modifiedFilesCount = (git diff --cached --name-only --diff-filter=M | Measure-Object).Count
-    $untrackedFilesCount = (git diff --cached --name-only --diff-filter=A | Measure-Object).Count
-    $stagingFilesCount = (git diff --cached --name-only | Measure-Object).Count
-
-    # get the number of changed files and untracked files expanding untracked directories
-    git commit -m "Scheduled tracking at $Now"
-    git push origin main
-
     Write-Host "Tracking complete."
-
-    # Log success
-    $successMessage = "[$(Get-Date)] SUCCESS: Tracking completed successfully."
-    Add-Content -Path $LogFile -Value $successMessage
-
-    # Toast notification for success
-    [System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms') | Out-Null
-    $toast = New-Object System.Windows.Forms.NotifyIcon
-    $toast.Icon = [System.Drawing.SystemIcons]::Information
-    $toast.BalloonTipTitle = "Tracking Script Succeeded"
-    # Calculate next run time based on 4-hour fixed windows
-    $now = Get-Date
+    
+    # Toast notification for success (Windows 10+ style)
     $nextRun = $now.Date.AddHours(4 * [math]::Ceiling($now.Hour / 4))
     if ($nextRun -le $now) { $nextRun = $nextRun.AddHours(4) }
-    $toast.BalloonTipText = $(
-        if ($stagingFilesCount -eq 0) {
-            "No changes to push."
-        } else {
-            "$stagingFilesCount to push ($modifiedFilesCount modified, $untrackedFilesCount untracked)"
-        }
-    ) + "`nNext run: $($nextRun.ToString('dd/MM/yyyy H:mm'))"
-    $toast.BalloonTipIcon = [System.Windows.Forms.ToolTipIcon]::Info
-    $toast.Visible = $true
-    $toast.ShowBalloonTip(10000)
+    $nextRunStr = $nextRun.ToString('H:mm')
+    
+    # Get latest commit hash for toast link
+    $originUrl = git remote get-url origin
+    $repoUrl = $originUrl -replace '\.git$', ''
+    $commitHash = git rev-parse HEAD
+    $commitUrl = "$repoUrl/commit/$commitHash"
+    
+    $xml = @"
+<toast activationType="protocol" launch="$commitUrl" duration="short">
+  <visual>
+    <binding template="ToastGeneric">
+      <text>Tracking Done (next: $nextRunStr)</text>
+      <text placement="attribution">Click to open commit on Github</text>
+    </binding>
+  </visual>
+</toast>
+"@
+    $XmlDocument = [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]::New()
+    $XmlDocument.loadXml($xml)
+    $AppId = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe'
+    $toast = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]::CreateToastNotifier($AppId)
+    $toast.Show($XmlDocument)
 }
 catch {
-    $errorMessage = "[$(Get-Date)] ERROR: $_"
+    # Inside catch block
+    $traceString = $_.Exception.StackTrace -replace '\s+', ' ' -replace '[\r\n]+', '; '
+
+    $errorMessage = @"
+[$NowLog] ERROR
+    Message     : $($_.Exception.Message)
+    Script Trace: $_.ScriptStackTrace
+    Stack Trace : $traceString
+    Exit Code   : $LASTEXITCODE
+"@
+
     Add-Content -Path $LogFile -Value $errorMessage
 
-    # Notification (minimal disruption)
-    [System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms') | Out-Null
-    $balloon = New-Object System.Windows.Forms.NotifyIcon
-    $balloon.Icon = [System.Drawing.SystemIcons]::Error
-    $balloon.BalloonTipTitle = "Tracking Script Failed"
-    $balloon.BalloonTipText = $_.ToString()
-    $balloon.BalloonTipIcon = [System.Windows.Forms.ToolTipIcon]::Error
-    $balloon.Visible = $true
-    $balloon.ShowBalloonTip(10000)
+    # Toast notification for error (Windows 10+ style)
+    $truncatedErr = $_.Exception.Message -replace '^(.{100}).+$', '$1...' # truncate to 100 chars
+    $escapedErr = [System.Security.SecurityElement]::Escape($truncatedErr)
 
+    $logUri = "vscode://file/$($LogFile)"
+    # 4. Escape the URI for the **attribute** slot as well
+    $escapedUri = [System.Security.SecurityElement]::Escape($logUri)
+
+    $xml = @"
+    <toast activationType="protocol" launch="$escapedUri" duration="short">
+    <visual>
+        <binding template="ToastGeneric">
+        <text>Tracking Failed</text>
+        <text>$escapedErr</text>
+        <text placement="attribution">Click to open log in VSCode</text>
+        </binding>
+    </visual>
+</toast>
+"@
+    $XmlDocument = [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]::New()
+    $XmlDocument.loadXml($xml)
+    $AppId = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe'
+    $toast = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]::CreateToastNotifier($AppId)
+    $toast.Show($XmlDocument)
     Write-Warning "Tracking script failed: $_"
 }
