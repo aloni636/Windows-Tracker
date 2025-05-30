@@ -15,3 +15,6 @@ Thumbs.db
 *.ncb
 *.psess
 *.pdb
+
+# Ignore hidden powershell window vbs file trick
+launch_hidden.vbs

@@ -36,12 +36,21 @@ if (-not (Get-Command sqlite3.exe -ErrorAction SilentlyContinue)) {
     }
 }
 
+# We are using vbs script to launch PowerShell in hidden mode.
+# as -WindowStyle Hidden actually minimizes window, not hidding it.
+# See: https://github.com/PowerShell/PowerShell/issues/3028
+$escapedScriptPath = $ScriptPath.Replace('"', '""')  # Escape quotes for VBScript
+$VbsPath = Join-Path $PSScriptRoot "launch_hidden.vbs"
+
+@"
+Set objShell = CreateObject("Wscript.Shell")
+objShell.Run "powershell.exe -ExecutionPolicy Bypass -File ""$escapedScriptPath""", 0, False
+"@ | Set-Content -Encoding ASCII -Path $VbsPath
+
 # Register Scheduled Task (every 4 hours, fixed window)
 $Action = New-ScheduledTaskAction `
-    -Execute "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" `
-    -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$ScriptPath`""
-    # -WindowStyle Hidden is actually minimized window, not hidden.
-    # See: https://github.com/PowerShell/PowerShell/issues/3028
+    -Execute "wscript.exe" `
+    -Argument "`"$VbsPath`""
 
 # Trigger 1: Every 4 hours starting at the next full 4-hour block
 $now = Get-Date
@@ -82,6 +91,7 @@ To execute the task manually, run:
 
 To examine the task, run:
     Get-ScheduledTask -TaskName 'Track System' | Get-ScheduledTaskInfo
+    Get-ScheduledTask -TaskName 'Track System' | select *
 
 To disable the task, run:
     sudo powershell 'Disable-ScheduledTask -TaskName "Track System" -TaskPath "\"'
