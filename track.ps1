@@ -2,6 +2,9 @@
 
 # Conventions: snake_case for filenames
 
+param(
+    [switch]$DisableGit
+)
 
 $Now = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
 $HomeDir = [Environment]::GetFolderPath("UserProfile")
@@ -42,24 +45,52 @@ try {
     }
     foreach ($browser in $ChromiumBrowsers.Keys) {
         $browserPath = $ChromiumBrowsers[$browser]
-        if (Test-Path $browserPath) {
-            Get-ChildItem -Path $browserPath -Directory | Where-Object { $_.Name -match '^(Default|Profile \\d+)$' } | ForEach-Object {
-                $profileName = $_.Name
-                $bookmarkPath = Join-Path $_.FullName "bookmarks"
-                if (Test-Path $bookmarkPath) {
-                    $dst = Join-Path $TrackedFilesDir ("${browser}_${profileName}_bookmarks.json")
-                    # Redact sync metadata from bookmarks JSON file
-                    Get-Content $bookmarkPath -Encoding UTF8 | ForEach-Object {
-                        $_ -replace '("sync_metadata"\s*:\s*)".*?"', '$1"[redacted]"'
-                    } | Set-Content $dst -Encoding UTF8
-                }
+        if (-not (Test-Path $browserPath)) { continue }
+
+        # Retrieve the local state file to get profile names
+        $localStatePath = Join-Path $browserPath "Local State"
+        $json = $null
+        if (Test-Path $localStatePath) {
+            $json = Get-Content $localStatePath -Raw | ConvertFrom-Json
+        }
+
+        # Iterate through each profile directory
+        Get-ChildItem -Path $browserPath -Directory | Where-Object { $_.Name -match '^(Default|Profile \d+)$' } | ForEach-Object {
+            # Map profile names to display names
+            $profileName = $_.Name
+            $outputName = $profileName
+            if ($json -and $json.profile.info_cache.$profileName -and $json.profile.info_cache.$profileName.name) {
+                $outputName = $json.profile.info_cache.$profileName.name
+            }
+
+            # Track bookmarks
+            $bookmarkPath = Join-Path $_.FullName "bookmarks"
+            if (Test-Path $bookmarkPath) {
+    
+                $dst = Join-Path $TrackedFilesDir ("${browser}_${outputName}_bookmarks.json")
+                # Redact sync metadata from bookmarks JSON file
+                Get-Content $bookmarkPath -Encoding UTF8 | ForEach-Object {
+                    $_ -replace '("sync_metadata"\s*:\s*)".*?"', '$1"[redacted]"'
+                } | Set-Content $dst -Encoding UTF8
+             }
+
+            # Track search engines
+            $webDataPath = Join-Path $_.FullName "Web Data"
+            if (Test-Path $webDataPath) {
+                $searchEnginesOut = Join-Path $TrackedFilesDir ("${browser}_${outputName}_search_engines.csv")
+                $query = 'SELECT short_name, keyword, url, is_active, date_created FROM keywords ORDER BY id ASC;'
+                $tmpDb = [System.IO.Path]::GetTempFileName()
+                Copy-Item -Force $webDataPath $tmpDb
+                write-host "Copied $webDataPath to $tmpDb"
+                sqlite3 $tmpDb ".mode csv" ".headers on" ".output '$searchEnginesOut'" $query ".exit"
+                Remove-Item $tmpDb -Force
             }
         }
     }
-    
+
     Write-Host "Done."
 
-    
+
     # Export installed programs (sorted by all properties for guaranteed consistency)
     Write-Host -NoNewline "[Registry] Exporting installed programs... "
 
@@ -140,6 +171,10 @@ try {
     Write-Host "Done."
 
     # Push changes to Github
+    if ($DisableGit) {
+        Write-Host "Git operations are disabled. Skipping commit and push."
+        return
+    }
     Set-Location $RepoDir
     
     git add $TrackedFilesDir

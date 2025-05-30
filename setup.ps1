@@ -1,3 +1,5 @@
+# This script initializes the Git repo, sets up directory structure and registers scheduled tracking tasks.
+
 # Elevation check: Relaunch as admin if not already
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     Write-Host "Script requires admin to register tasks to the scheduler. Relaunching with sudo..."
@@ -5,14 +7,33 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
     exit
 }
 
-# This script initializes the Git repo and sets up directory structure.
 
 $RepoDir = $PSScriptRoot
 $ScriptPath = Join-Path $RepoDir "track.ps1"
 
+# Ensure Git is installed
+if (-not (Get-Command git.exe -ErrorAction SilentlyContinue)) {
+    Write-Host "Git not found. Installing via winget..."
+    winget install --id=Git.Git --silent --accept-package-agreements --accept-source-agreements
+    if (-not (Get-Command git.exe -ErrorAction SilentlyContinue)) {
+        Write-Host "Git installation failed or not found in PATH. Please install manually."
+        exit 1
+    }
+}
+
 # Init Git repo if not already
 if (-not (Test-Path (Join-Path $RepoDir ".git"))) {
     git init $RepoDir
+}
+
+# Ensure SQLite is installed
+if (-not (Get-Command sqlite3.exe -ErrorAction SilentlyContinue)) {
+    Write-Host "SQLite not found. Installing via winget..."
+    winget install --id=SQLite.sqlite --silent --accept-package-agreements --accept-source-agreements
+    if (-not (Get-Command sqlite3.exe -ErrorAction SilentlyContinue)) {
+        Write-Host "SQLite installation failed or not found in PATH. Please install manually."
+        exit 1
+    }
 }
 
 # Register Scheduled Task (every 4 hours, fixed window)
@@ -61,4 +82,7 @@ To execute the task manually, run:
 
 To examine the task, run:
     Get-ScheduledTask -TaskName 'Track System' | Get-ScheduledTaskInfo
+
+To disable the task, run:
+    sudo powershell 'Disable-ScheduledTask -TaskName "Track System" -TaskPath "\"'
 "@
