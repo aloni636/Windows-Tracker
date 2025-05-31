@@ -273,14 +273,16 @@ try {
     $originUrl = git remote get-url origin
     $repoUrl = $originUrl -replace '\.git$', ''
     $commitHash = git rev-parse HEAD
-    $commitUrl = "$repoUrl/commit/$commitHash"
+    $commitUrl = if ($stagingFilesCount -gt 0) {"$repoUrl/commit/$commitHash"} else {""}
+
+    $attribution = if ($stagingFilesCount -gt 0) {"Click to open commit on Github"} else {""}
     
     $xml = @"
 <toast activationType="protocol" launch="$commitUrl" duration="short">
   <visual>
     <binding template="ToastGeneric">
       <text>Tracking Done (next: $nextRunStr)</text>
-      <text placement="attribution">Click to open commit on Github</text>
+      <text placement="attribution">${attribution}</text>
     </binding>
   </visual>
 </toast>
