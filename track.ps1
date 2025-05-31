@@ -23,6 +23,7 @@ if (-not (Test-Path $TrackedFilesDir)) {
 }
 
 try {
+    # --- Collect Tracked Files From The System --- #
     # Copy firefox bookmarks
     # Note: Firefox stores bookmarks in a SQLite database
     Write-Host -NoNewline "[Firefox] Copying bookmarks... "
@@ -146,7 +147,7 @@ try {
     Write-Host "Done."
 
 
-    # Copy PowerShell $PROFILE scripts (all scopes)
+    # Copy PowerShell $PROFILE scripts (CurrentUserAllHosts scope)
     Write-Host -NoNewline "[PowerShell] Copying CurrentUserAllHosts profile script... "
     $profilePath = $PROFILE.CurrentUserAllHosts
     if (Test-Path $profilePath) {
@@ -164,7 +165,7 @@ try {
     }
     Write-Host "Done."
 
-    # Copy .gource-config if it exists
+    # Copy .gource-config
     Write-Host -NoNewline "[Gource] Copying .gource-config... "
     $gourceConfigPath = Join-Path $HomeDir ".gource-config"
     if (Test-Path $gourceConfigPath) {
@@ -173,7 +174,7 @@ try {
     }
     Write-Host "Done."
 
-    # Push changes to Github
+    # --- Push Changes To Github --- #
     if ($DisableGit) {
         Write-Host "Git operations are disabled. Skipping commit and push."
     } else {
@@ -181,21 +182,60 @@ try {
         
         git add $TrackedFilesDir
         
-        $diff = git diff --cached $WingetExportPath
-        # Check if the diff ONLY touches CreationDate
-        if ($diff -match '^\+\s*"CreationDate"\s*:\s*".*?"\s*,\s*$' -and
-        $diff -match '^\-\s*"CreationDate"\s*:\s*".*?"\s*,\s*$' -and
-        ($diff -replace '(\+\s*"CreationDate".*|\-\s*"CreationDate".*)', '').Trim() -eq '') {
-            
-            Write-Output "Skipping winget_export.json: Only CreationDate changed"
-            
-            # Unstage the file
-            git restore --staged $WingetExportPath
-            
-            # Optionally revert the file to match HEAD
-            git restore $WingetExportPath
+        # --- Conditional Tracking --- #
+        function Remove-DiffHeaders {
+            <#
+            This filter method removes diff hunk headers from `git diff -U0` input string.
+            Example usage:
+                git diff -U0 | Remove-DiffHeaders
+            #>
+            process {
+                $headerSuffixes = @(
+                    'diff \-{2}git', # Diff header
+                    'index', # Index line
+                    '\-{3}', # Old file header
+                    '\+{3}', # New file header
+                    '@@' # Hunk header
+                    )
+                $pattern = '(?m)^(' + ($headerSuffixes -join '|') + ').*?$'
+                return $_ -replace $pattern, ''
+                # -replace '^[+-]\s*$', '' # Can be used to remove empty diff lines
+                # -replace '(?m)^(@@|\+{3}|\-{3}|index|diff \-{2}git).*$', '' `
+            }
         }
         
+        # Check if the diff ONLY touches CreationDate in winget_export.json
+        # NOTE: Out-String is used to collapse the output which is array of lines into a single line
+        $diffWingetExport = (git diff --staged -U0 $WingetExportPath) | Out-String
+        if (($diffWingetExport `
+            -replace '[+-]\s*"CreationDate".*', '' `
+            | Remove-DiffHeaders
+        ).Trim() -eq '') {
+            Write-Output "Skipping winget_export.json: Only CreationDate changed"
+            
+            # Unstage the file and revert to match HEAD
+            git restore --staged $WingetExportPath
+            git restore $WingetExportPath
+        }
+
+        # Check if the diff ONLY touches date_last_used and/or visit_count in *_bookmarks.json files
+        git diff --staged --name-only | Where-Object { $_ -match '_bookmarks\.json$' } | ForEach-Object {
+            $file = $_
+            # NOTE: Out-String is used to collapse the output which is array of lines into a single line
+            $diff = (git diff --staged -U0 $file) | Out-String 
+
+            if (($diff `
+               -replace '(?m)^[+-]\s*"date_last_used"\s*:\s*".*?",?\s*$', '' `
+               -replace '(?m)^[+-]\s*"visit_count"\s*:\s*\d+,?\s*$', '' `
+               | Remove-DiffHeaders
+            ).Trim() -eq '') {
+                   Write-Output "Skipping ${file}: Only date_last_used and/or visit_count changed"
+                   
+                  # Unstage the file and revert to match HEAD
+                   git restore --staged $file
+                   git restore $file
+               }
+        }
         
         # Get the number of modified files and untracked files in the staging area:
         # | Letter | Meaning                                         |
@@ -224,7 +264,7 @@ try {
 
     Write-Host "Tracking complete."
     
-    # Toast notification for success (Windows 10+ style)
+    # --- Toast Notifications (Windows 10+ style) --- #
     $nextRun = $now.Date.AddHours(4 * [math]::Ceiling($now.Hour / 4))
     if ($nextRun -le $now) { $nextRun = $nextRun.AddHours(4) }
     $nextRunStr = $nextRun.ToString('H:mm')
