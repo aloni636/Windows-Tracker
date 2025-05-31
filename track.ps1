@@ -205,6 +205,7 @@ try {
         }
         
         # Check if the diff ONLY touches CreationDate in winget_export.json
+        # Each time you run `winget export`, it updates the CreationDate field to the current date, which is irrelevant.
         # NOTE: Out-String is used to collapse the output which is array of lines into a single line
         $diffWingetExport = (git diff --staged -U0 $WingetExportPath) | Out-String
         if (($diffWingetExport `
@@ -219,6 +220,8 @@ try {
         }
 
         # Check if the diff ONLY touches date_last_used and/or visit_count in *_bookmarks.json files
+        # Those fields are updated by browsers when you visit a bookmark,
+        # which is irrelevant for tracking new, modified or deleted bookmarks.
         git diff --staged --name-only | Where-Object { $_ -match '_bookmarks\.json$' } | ForEach-Object {
             $file = $_
             # NOTE: Out-String is used to collapse the output which is array of lines into a single line
@@ -237,6 +240,19 @@ try {
                }
         }
         
+        # Check if the diff ONLY touches Winget.Source in microsoft_store_apps.csv
+        # Microsoft.Winget.Source is an MSIX file that contains a pre-indexed snapshot 
+        # of the Winget community repository (basically a compressed SQLite DB with all the manifests).
+        # Due to its update frequency (couple of times per day) and irrelevance, it is ignored.
+        $diffMicrosoftStore = (git diff --staged -U0 $MicrosoftStorePath) | Out-String
+        if (($diffMicrosoftStore `
+            -replace '(?m)^[+-]\s*".*Microsoft\.Winget\.Source".*$', '' |
+            Remove-DiffHeaders).Trim() -eq '') {
+            Write-Output 'Skipping microsoft_store_apps.csv: only Winget.Source bumped'
+            git restore --staged $MicrosoftStorePath
+            git restore $MicrosoftStorePath
+        }
+
         # Get the number of modified files and untracked files in the staging area:
         # | Letter | Meaning                                         |
         # | ------ | ----------------------------------------------- |
