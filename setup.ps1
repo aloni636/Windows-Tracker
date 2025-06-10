@@ -7,6 +7,18 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
     exit
 }
 
+# Ensure the script is using default windows PowerShell
+if ($PSVersionTable.PSEdition -ne 'Desktop') {
+    Write-Host "Script is intended to run in Windows PowerShell (not PowerShell Core). Please use the default PowerShell."
+    exit 1
+}
+
+# Link PowerShell 7 (pwsh.exe) $PROFILE.CurrentUserAllHosts profile to PowerShell 5 profile
+if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) {
+    $PwshProfile = & pwsh -NoProfile -Command '$PROFILE.CurrentUserAllHosts'
+    New-Item -Force -ItemType SymbolicLink -Path $PROFILE.CurrentUserAllHosts -Target $PwshProfile | Out-Null
+    Write-Host "Linked PowerShell 7 profile to Windows PowerShell profile."
+}
 
 $RepoDir = $PSScriptRoot
 $ScriptPath = Join-Path $RepoDir "track.ps1"
