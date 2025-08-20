@@ -26,17 +26,59 @@ try {
     # --- Collect Tracked Files From The System --- #
     # Copy firefox bookmarks
     # Note: Firefox stores bookmarks in a SQLite database
-    Write-Host -NoNewline "[Firefox] Copying bookmarks... "
-    
+    # --- Firefox bookmarks -> CSV (per-profile) ---
+    Write-Host -NoNewline "[Firefox] Exporting bookmarks... "
+
     $Firefox = Join-Path $HomeDir "AppData\Roaming\Mozilla\Firefox\Profiles"
     if (Test-Path $Firefox) {
         Get-ChildItem -Path $Firefox -Recurse -Filter "places.sqlite" | ForEach-Object {
             $profileName = Split-Path $_.Directory.Name -Leaf
-            $dst = Join-Path $TrackedFilesDir ("firefox_${profileName}_places.sqlite")
-            Copy-Item -Force $_.FullName $dst
+
+            # Copy DB to a temp file to avoid locks
+            $tmpDb = [System.IO.Path]::GetTempFileName()
+            Copy-Item -Force $_.FullName $tmpDb
+
+            # Output path
+            $outCsv = Join-Path $TrackedFilesDir ("firefox_${profileName}_bookmarks.csv")
+
+            # Export bookmarks:
+            # - type=1 = bookmarks (not folders/livemarks)
+            # - Build folder_path via recursive CTE over moz_bookmarks parent links
+            # - Convert PRTime microseconds -> UTC ISO (seconds for sqlite)
+            # - Join moz_places for URL, moz_keywords for keyword
+            $query = @"
+WITH RECURSIVE
+tree(id, parent, name, path) AS (
+    SELECT id, parent, COALESCE(title,''), '' FROM moz_bookmarks WHERE parent = 0
+    UNION ALL
+    SELECT b.id,
+        b.parent,
+        COALESCE(b.title,''),
+        CASE WHEN t.path = '' THEN COALESCE(b.title,'') ELSE t.path || '/' || COALESCE(b.title,'') END
+    FROM moz_bookmarks b
+    JOIN tree t ON b.parent = t.id
+)
+SELECT
+bm.guid                                           AS guid,
+COALESCE(bm.title,'')                             AS title,
+mp.url                                            AS url,
+tree.path                                         AS folder_path,
+strftime('%Y-%m-%dT%H:%M:%SZ', bm.dateAdded/1000000, 'unixepoch')     AS date_added_utc,
+strftime('%Y-%m-%dT%H:%M:%SZ', bm.lastModified/1000000, 'unixepoch')  AS last_modified_utc,
+COALESCE(mk.keyword,'')                           AS keyword
+FROM moz_bookmarks bm
+JOIN tree ON tree.id = bm.id
+LEFT JOIN moz_places   mp ON mp.id = bm.fk
+LEFT JOIN moz_keywords mk ON mk.id = bm.keyword_id
+WHERE bm.type = 1
+ORDER BY bm.dateAdded ASC;
+"@
+
+            sqlite3 $tmpDb ".mode csv" ".headers on" ".output '$outCsv'" $query ".exit"
+            Remove-Item $tmpDb -Force
         }
     }
-    
+
     Write-Host "Done."
     
     
@@ -76,7 +118,7 @@ try {
                 Get-Content $bookmarkPath -Encoding UTF8 | ForEach-Object {
                     $_ -replace '("sync_metadata"\s*:\s*)".*?"', '$1"[redacted]"'
                 } | Set-Content $dst -Encoding UTF8
-             }
+            }
 
             # Track search engines
             $webDataPath = Join-Path $_.FullName "Web Data"
@@ -101,12 +143,12 @@ try {
     $InstalledProgramsPath = Join-Path $TrackedFilesDir "installed_programs.csv"
     $InstalledProgramsProperties = @("DisplayName", "DisplayVersion", "Publisher", "InstallDate")
     Get-ItemProperty HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*, `
-            HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*, `
-            HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*  |
-        Where-Object { $_.DisplayName } |
-        Select-Object $InstalledProgramsProperties |
-        Sort-Object -Property $InstalledProgramsProperties |
-        Export-Csv -Path $InstalledProgramsPath -NoTypeInformation -Encoding UTF8
+        HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*, `
+        HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*  |
+    Where-Object { $_.DisplayName } |
+    Select-Object $InstalledProgramsProperties |
+    Sort-Object -Property $InstalledProgramsProperties |
+    Export-Csv -Path $InstalledProgramsPath -NoTypeInformation -Encoding UTF8
     
     write-Host "Done."
 
@@ -127,9 +169,9 @@ try {
     $PsGalleryProperties = @("Name", "Version", "Repository")
     # Sort by all properties to ensure consistent output
     Get-InstalledModule |
-        Select-Object $PsGalleryProperties |
-        Sort-Object -Property $PsGalleryProperties |
-        Export-Csv -Path $PsGalleryPath -NoTypeInformation
+    Select-Object $PsGalleryProperties |
+    Sort-Object -Property $PsGalleryProperties |
+    Export-Csv -Path $PsGalleryPath -NoTypeInformation
     
     Write-Host "Done."
 
@@ -140,9 +182,9 @@ try {
     $MicrosoftStorePath = Join-Path $TrackedFilesDir "microsoft_store_apps.csv"
     $MicrosoftStoreProperties = @("Name", "Version", "Publisher", "IsDevelopmentMode", "NonRemovable")
     Get-AppxPackage |
-        Select-Object $MicrosoftStoreProperties |
-        Sort-Object -Property $MicrosoftStoreProperties |
-        Export-Csv -Path $MicrosoftStorePath -NoTypeInformation
+    Select-Object $MicrosoftStoreProperties |
+    Sort-Object -Property $MicrosoftStoreProperties |
+    Export-Csv -Path $MicrosoftStorePath -NoTypeInformation
     
     Write-Host "Done."
 
@@ -177,7 +219,8 @@ try {
     # --- Push Changes To Github --- #
     if ($DisableGit) {
         Write-Host "Git operations are disabled. Skipping commit and push."
-    } else {
+    }
+    else {
         Set-Location $RepoDir
         
         git add $TrackedFilesDir
@@ -196,7 +239,7 @@ try {
                     '\-{3}', # Old file header
                     '\+{3}', # New file header
                     '@@' # Hunk header
-                    )
+                )
                 $pattern = '(?m)^(' + ($headerSuffixes -join '|') + ').*?$'
                 return $_ -replace $pattern, ''
                 # -replace '^[+-]\s*$', '' # Can be used to remove empty diff lines
@@ -209,9 +252,9 @@ try {
         # NOTE: Out-String is used to collapse the output which is array of lines into a single line
         $diffWingetExport = (git diff --staged -U0 $WingetExportPath) | Out-String
         if (($diffWingetExport `
-            -replace '[+-]\s*"CreationDate".*', '' `
-            | Remove-DiffHeaders
-        ).Trim() -eq '') {
+                    -replace '[+-]\s*"CreationDate".*', '' `
+                | Remove-DiffHeaders
+            ).Trim() -eq '') {
             Write-Output "Skipping winget_export.json: Only CreationDate changed"
             
             # Unstage the file and revert to match HEAD
@@ -228,16 +271,16 @@ try {
             $diff = (git diff --staged -U0 $file) | Out-String 
 
             if (($diff `
-               -replace '(?m)^[+-]\s*"date_last_used"\s*:\s*".*?",?\s*$', '' `
-               -replace '(?m)^[+-]\s*"visit_count"\s*:\s*\d+,?\s*$', '' `
-               | Remove-DiffHeaders
-            ).Trim() -eq '') {
-                   Write-Output "Skipping ${file}: Only date_last_used and/or visit_count changed"
+                        -replace '(?m)^[+-]\s*"date_last_used"\s*:\s*".*?",?\s*$', '' `
+                        -replace '(?m)^[+-]\s*"visit_count"\s*:\s*\d+,?\s*$', '' `
+                    | Remove-DiffHeaders
+                ).Trim() -eq '') {
+                Write-Output "Skipping ${file}: Only date_last_used and/or visit_count changed"
                    
-                  # Unstage the file and revert to match HEAD
-                   git restore --staged $file
-                   git restore $file
-               }
+                # Unstage the file and revert to match HEAD
+                git restore --staged $file
+                git restore $file
+            }
         }
         
         # Check if the diff ONLY touches Winget.Source in microsoft_store_apps.csv
@@ -246,8 +289,8 @@ try {
         # Due to its update frequency (couple of times per day) and irrelevance, it is ignored.
         $diffMicrosoftStore = (git diff --staged -U0 $MicrosoftStorePath) | Out-String
         if (($diffMicrosoftStore `
-            -replace '(?m)^[+-]\s*".*Microsoft\.Winget\.Source".*$', '' |
-            Remove-DiffHeaders).Trim() -eq '') {
+                    -replace '(?m)^[+-]\s*".*Microsoft\.Winget\.Source".*$', '' |
+                Remove-DiffHeaders).Trim() -eq '') {
             Write-Output 'Skipping microsoft_store_apps.csv: only Winget.Source bumped'
             git restore --staged $MicrosoftStorePath
             git restore $MicrosoftStorePath
@@ -289,9 +332,9 @@ try {
     $originUrl = git remote get-url origin
     $repoUrl = $originUrl -replace '\.git$', ''
     $commitHash = git rev-parse HEAD
-    $commitUrl = if ($stagingFilesCount -gt 0) {"$repoUrl/commit/$commitHash"} else {""}
+    $commitUrl = if ($stagingFilesCount -gt 0) { "$repoUrl/commit/$commitHash" } else { "" }
 
-    $attribution = if ($stagingFilesCount -gt 0) {"Click to open commit on Github"} else {""}
+    $attribution = if ($stagingFilesCount -gt 0) { "Click to open commit on Github" } else { "" }
     
     $xml = @"
 <toast activationType="protocol" launch="$commitUrl" duration="short">
