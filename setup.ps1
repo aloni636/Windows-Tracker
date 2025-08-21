@@ -9,8 +9,7 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 
 # Ensure the script is using default windows PowerShell
 if ($PSVersionTable.PSEdition -ne 'Desktop') {
-    Write-Host "Script is intended to run in Windows PowerShell (not PowerShell Core). Please use the default PowerShell."
-    exit 1
+    throw "Script is intended to run in Windows PowerShell (not PowerShell Core). Please use the default PowerShell."
 }
 
 # Link PowerShell 7 (pwsh.exe) $PROFILE.CurrentUserAllHosts profile to PowerShell 5 profile
@@ -20,22 +19,31 @@ if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) {
     Write-Host "Linked PowerShell 7 profile to Windows PowerShell profile."
 }
 
-$RepoDir = $PSScriptRoot
-$ScriptPath = Join-Path $RepoDir "track.ps1"
-
 # Ensure Git is installed
 if (-not (Get-Command git.exe -ErrorAction SilentlyContinue)) {
     Write-Host "Git not found. Installing via winget..."
     winget install --id=Git.Git --silent --accept-package-agreements --accept-source-agreements
     if (-not (Get-Command git.exe -ErrorAction SilentlyContinue)) {
-        Write-Host "Git installation failed or not found in PATH. Please install manually."
-        exit 1
+        throw "Git installation failed or not found in PATH. Please install manually."
     }
 }
 
+# Ensure config file exists, prompt 
+if (-not (Test-Path ".\config.psd1")) {
+    throw "Config file .\config.psd1 was not found. Create it with schema from .\config.example.psd1 and run again."
+}
+$Config = Import-PowerShellDataFile -Path ".\config.psd1"
+$TrackingRepo = Resolve-Path $Config.TrackingRepo
+$TaskName = "Windows-Tracking"
+
+# Init tracking repo of 
+if (-not (Test-Path $TrackingRepo)) {
+    Write-Host "$TrackingRepo not found. Creating automatically..."
+    New-Item $TrackingRepo -ItemType Directory
+}
 # Init Git repo if not already
-if (-not (Test-Path (Join-Path $RepoDir ".git"))) {
-    git init $RepoDir
+if (-not (Test-Path (Join-Path $TrackingRepo ".git"))) {
+    git init $TrackingRepo
 }
 
 # Ensure SQLite is installed
@@ -43,20 +51,20 @@ if (-not (Get-Command sqlite3.exe -ErrorAction SilentlyContinue)) {
     Write-Host "SQLite not found. Installing via winget..."
     winget install --id=SQLite.sqlite --silent --accept-package-agreements --accept-source-agreements
     if (-not (Get-Command sqlite3.exe -ErrorAction SilentlyContinue)) {
-        Write-Host "SQLite installation failed or not found in PATH. Please install manually."
-        exit 1
+        throw "SQLite installation failed or not found in PATH. Please install manually."
     }
 }
 
 # We are using vbs script to launch PowerShell in hidden mode.
 # as -WindowStyle Hidden actually minimizes window, not hidding it.
 # See: https://github.com/PowerShell/PowerShell/issues/3028
+$ScriptPath = Join-Path $PSScriptRoot "track.ps1"
 $escapedScriptPath = $ScriptPath.Replace('"', '""')  # Escape quotes for VBScript
 $VbsPath = Join-Path $PSScriptRoot "launch_hidden.vbs"
 
 @"
 Set objShell = CreateObject("Wscript.Shell")
-objShell.Run "powershell.exe -ExecutionPolicy Bypass -File ""$escapedScriptPath""", 0, False
+objShell.Run "powershell.exe -ExecutionPolicy Bypass -File ""$escapedScriptPath"" -TrackingRepo ""$TrackingRepo""", 0, False
 "@ | Set-Content -Encoding ASCII -Path $VbsPath
 
 # Register Scheduled Task (every 4 hours, fixed window)
@@ -90,21 +98,27 @@ Register-ScheduledTask -Action $Action `
     -Trigger @($Trigger1, $Trigger2) `
     -Principal $Principal `
     -Settings $Settings `
-    -TaskName "Track System" `
-    -Description "Track system info every 4 hours and at logon (non-admin)" `
+    -TaskName "$TaskName" `
+    -Description "$TaskName info every 4 hours and at logon (non-admin)" `
     -Force
 
 Write-Host @"
 
-Setup completed at ${RepoDir} with 'Track System' task scheduled to run every 4 hours and at logon.
+Setup complete.
 
-To execute the task manually, run:
-    Start-ScheduledTask -TaskName 'Track System'
+Run once:
+  Start-ScheduledTask -TaskName '$TaskName'
 
-To examine the task, run:
-    Get-ScheduledTask -TaskName 'Track System' | Get-ScheduledTaskInfo
-    Get-ScheduledTask -TaskName 'Track System' | select *
+Inspect:
+  Get-ScheduledTask -TaskName "$TaskName" | Get-ScheduledTaskInfo
+  (Get-ScheduledTask -TaskName "$TaskName").Actions
+  (Get-ScheduledTask -TaskName "$TaskName").Triggers
+  (Get-ScheduledTask -TaskName "$TaskName").Principal
+  (Get-ScheduledTask -TaskName "$TaskName").Settings
 
-To disable the task, run:
-    sudo powershell 'Disable-ScheduledTask -TaskName "Track System" -TaskPath "\"'
+Disable:
+  sudo powershell -Command "Disable-ScheduledTask -TaskName '$TaskName'"
+
+Delete:
+  sudo powershell -Command "Unregister-ScheduledTask -TaskName '$TaskName' -Confirm:0"
 "@

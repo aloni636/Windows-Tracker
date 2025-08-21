@@ -18,3 +18,6 @@ Thumbs.db
 
 # Ignore hidden powershell window vbs file trick
 launch_hidden.vbs
+
+# Ignore environment file
+config.psd1

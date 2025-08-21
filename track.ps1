@@ -3,13 +3,14 @@
 # Conventions: snake_case for filenames
 
 param(
-    [switch]$DisableGit
+    [switch]$DisableGit,
+    [string]$TrackingRepo
 )
 
 $HomeDir = [Environment]::GetFolderPath("UserProfile")
-$RepoDir = $PSScriptRoot
-$TrackedFilesDir = Join-Path $RepoDir "tracked_files"
-$LogFile = Join-Path $RepoDir "track.log"
+$RepoDir = $TrackingRepo
+$TrackedFilesDir = $RepoDir
+$LogFile = Join-Path $PSScriptRoot "track.log"
 
 $now = Get-Date
 $NowIso = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
