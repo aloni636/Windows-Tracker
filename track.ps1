@@ -189,53 +189,63 @@ ORDER BY bm.dateAdded ASC;
     
     Write-Host "Done."
 
+    function Copy-HomeMirrored {
+        <# Copy one file under $HOME to a mirrored path under another root
+        Ignored if no matches are found, errors if founds more than 1 match. #>
+        [CmdletBinding(SupportsShouldProcess = $true)]
+        param(
+            [Parameter(Mandatory)]
+            [string]$SourcePattern   # absolute path, may contain wildcards
+        )
+
+        $resolved = Get-ChildItem -Path $SourcePattern -File -ErrorAction SilentlyContinue
+        if (-not $resolved) {
+            return
+        }
+        if ($resolved.Count -gt 1) {
+            $list = $resolved.FullName -join "`n"
+            throw "Multiple matches for: $SourcePattern`n$list"
+        }
+
+        $src = $resolved[0]
+        $full = [IO.Path]::GetFullPath($src.FullName)
+
+        if ($full.StartsWith($HomeDir, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $rel = $full.Substring($HomeDir.Length).TrimStart('\', '/')
+        }
+        else {
+            # Source not under HOME; fall back to filename-only mirroring
+            $rel = $src.Name
+        }
+
+        # To add "flatten" behavior in the future, override $rel here with $src.Name
+
+        $dst = Join-Path $TrackedFilesDir $rel
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dst) | Out-Null
+
+        Copy-Item -LiteralPath $src.FullName -Destination $dst -Force
+
+        return $dst
+    }
 
     # Copy PowerShell $PROFILE scripts (CurrentUserAllHosts scope)
     Write-Host -NoNewline "[PowerShell] Copying CurrentUserAllHosts profile script... "
-    $profilePath = $PROFILE.CurrentUserAllHosts
-    if (Test-Path $profilePath) {
-        $dst = Join-Path $TrackedFilesDir (Split-Path $profilePath -Leaf)
-        Copy-Item -Force $profilePath $dst
-    }
+    Copy-HomeMirrored ($PROFILE.CurrentUserAllHosts)
     Write-Host "Done."
-
+    
     # Copy global git config
     Write-Host -NoNewline "[Git] Copying global git config... "
-    $gitConfigPath = Join-Path $HomeDir ".gitconfig"
-    if (Test-Path $gitConfigPath) {
-        $dst = Join-Path $TrackedFilesDir ".gitconfig"
-        Copy-Item -Force $gitConfigPath $dst
-    }
+    Copy-HomeMirrored (Join-Path $HomeDir ".gitconfig")
     Write-Host "Done."
 
     # Copy .gource-config
     Write-Host -NoNewline "[Gource] Copying .gource-config... "
-    $gourceConfigPath = Join-Path $HomeDir ".gource-config"
-    if (Test-Path $gourceConfigPath) {
-        $dst = Join-Path $TrackedFilesDir ".gource-config"
-        Copy-Item -Force $gourceConfigPath $dst
-    }
+    Copy-HomeMirrored (Join-Path $HomeDir ".gource-config")
     Write-Host "Done."
 
     # assumes: $HomeDir and $TrackedFilesDir are set
     Write-Host -NoNewline "[WindowsTerminal] Copying settings.json... "
-
-    $pattern = Join-Path $HomeDir "AppData\Local\Packages\Microsoft.WindowsTerminal_*\LocalState\settings.json"
-
-    # pick the newest matching settings.json
-    $src = Get-ChildItem -Path $pattern -File -ErrorAction SilentlyContinue |
-        Sort-Object LastWriteTime -Descending |
-        Select-Object -First 1
-
-    if ($null -ne $src) {
-        # mirror the relative path under $TrackedFilesDir (no Resolve-Path)
-        $rel = $src.FullName.Substring($HomeDir.Length).TrimStart('\','/')
-        $dst = Join-Path $TrackedFilesDir $rel
-
-        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dst) | Out-Null
-        Copy-Item -LiteralPath $src.FullName -Destination $dst -Force
-    }
-
+    Copy-HomeMirrored (Join-Path $HomeDir "AppData\Local\Packages\Microsoft.WindowsTerminal_*\LocalState\settings.json")
     Write-Host "Done."
 
     # --- Push Changes To Github --- #
