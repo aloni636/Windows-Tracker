@@ -217,6 +217,27 @@ ORDER BY bm.dateAdded ASC;
     }
     Write-Host "Done."
 
+    # assumes: $HomeDir and $TrackedFilesDir are set
+    Write-Host -NoNewline "[WindowsTerminal] Copying settings.json... "
+
+    $pattern = Join-Path $HomeDir "AppData\Local\Packages\Microsoft.WindowsTerminal_*\LocalState\settings.json"
+
+    # pick the newest matching settings.json
+    $src = Get-ChildItem -Path $pattern -File -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1
+
+    if ($null -ne $src) {
+        # mirror the relative path under $TrackedFilesDir (no Resolve-Path)
+        $rel = $src.FullName.Substring($HomeDir.Length).TrimStart('\','/')
+        $dst = Join-Path $TrackedFilesDir $rel
+
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dst) | Out-Null
+        Copy-Item -LiteralPath $src.FullName -Destination $dst -Force
+    }
+
+    Write-Host "Done."
+
     # --- Push Changes To Github --- #
     if ($DisableGit) {
         Write-Host "Git operations are disabled. Skipping commit and push."
