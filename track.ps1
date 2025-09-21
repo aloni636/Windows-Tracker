@@ -212,6 +212,7 @@ ORDER BY bm.dateAdded ASC;
 
         if ($full.StartsWith($HomeDir, [System.StringComparison]::OrdinalIgnoreCase)) {
             $rel = $full.Substring($HomeDir.Length).TrimStart('\', '/')
+            $rel = "Home/" + $rel
         }
         else {
             # Source not under HOME; fall back to filename-only mirroring
