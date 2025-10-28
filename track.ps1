@@ -161,7 +161,16 @@ ORDER BY bm.dateAdded ASC;
     winget export --output $WingetExportPath 
     
     Write-Host "Done."
+    
+    # Export pipx installed apps
+    Write-Host -NoNewline "[pipx] Exporting installed apps... "
 
+    if (Get-Command pipx.exe -ErrorAction SilentlyContinue) {
+        $PipxExportPath = Join-Path $TrackedFilesDir "pipx_list.txt"
+        pipx list --short > $PipxExportPath
+    }
+    
+    Write-Host "Done."
     
     # Export PowerShell Gallery modules (sorted by all properties for guaranteed consistency)
     Write-Host -NoNewline "[PowerShell Gallery] Exporting installed modules... "
