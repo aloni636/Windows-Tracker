@@ -34,6 +34,7 @@ if (-not (Test-Path ".\config.psd1")) {
 }
 $Config = Import-PowerShellDataFile -Path ".\config.psd1"
 $TrackingRepo = Resolve-Path $Config.TrackingRepo
+$Deployment = New-Item -ItemType Directory -Path $Config.Deployment -Force
 $TaskName = "Windows-Tracking"
 
 # Init tracking repo of 
@@ -55,16 +56,25 @@ if (-not (Get-Command sqlite3.exe -ErrorAction SilentlyContinue)) {
     }
 }
 
+# Stop task before touching deployment
+if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
+    Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+}
+# cleanup deployment and copy track.ps1 to deployment
+Get-ChildItem $Config.Deployment -Recurse -Force | Remove-Item -Recurse -Force
+Copy-Item (Join-Path $PSScriptRoot "track.ps1") -Destination $Deployment -Force
+
+# Point $ScriptPath to deployment version
+$ScriptPath = Join-Path $Deployment "track.ps1"
+$escapedScriptPath = $ScriptPath.Replace('"', '""')
+$VbsPath = Join-Path $Deployment "launch_hidden.vbs"
+
 # We are using vbs script to launch PowerShell in hidden mode.
 # as -WindowStyle Hidden actually minimizes window, not hidding it.
 # See: https://github.com/PowerShell/PowerShell/issues/3028
-$ScriptPath = Join-Path $PSScriptRoot "track.ps1"
-$escapedScriptPath = $ScriptPath.Replace('"', '""')  # Escape quotes for VBScript
-$VbsPath = Join-Path $PSScriptRoot "launch_hidden.vbs"
-
 @"
 Set objShell = CreateObject("Wscript.Shell")
-objShell.Run "powershell.exe -ExecutionPolicy Bypass -File ""$escapedScriptPath"" -TrackingRepo ""$TrackingRepo""", 0, False
+objShell.Run "powershell.exe -ExecutionPolicy Bypass -File ""$escapedScriptPath"" -RepoDir ""$TrackingRepo""", 0, False
 "@ | Set-Content -Encoding ASCII -Path $VbsPath
 
 # Register Scheduled Task (every 4 hours, fixed window)

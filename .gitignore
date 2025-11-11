@@ -21,3 +21,6 @@ launch_hidden.vbs
 
 # Ignore environment file
 config.psd1
+
+# ignore deployment
+deployment
