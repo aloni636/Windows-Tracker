@@ -1,15 +1,55 @@
-# This script tracks browser bookmarks, installed apps, and file metadata.
-
-# Conventions: snake_case for filenames
-
+# --- Parameters ---
 param(
     [switch]$DisableGit,
-    [string]$TrackingRepo
+    [string]$RepoDir
 )
 
+# --- Functions --- #
+# Conditional Tracking
+function Reject-Csv-Diff {
+    <# Drop csv diffs whose ALL field level diff match $Pattern #>
+    param(
+        [Parameter(Mandatory)]
+        [string]$FilePath,
+
+        [Parameter(Mandatory)]
+        [string]$Pattern
+    )
+
+    $diff = git diff HEAD~1 -U0 --word-diff=porcelain --word-diff-regex='[^,]+' -- $FilePath |
+    Where-Object { $_ -match '^[+-]' -and $_ -notmatch '^(---|\+\+\+)' } |
+    ForEach-Object { $_ -replace '^[+-]' -replace '^"|"$' }
+
+    if (($diff | Where-Object { $_ -notmatch $Pattern }).Count -eq 0) {
+        # Unstage the file and revert to match HEAD
+        Write-Output "Skipping ${FilePath}"
+        git restore $FilePath
+    }
+}
+
+function Reject-Json-Diff {
+    <# Drop csv diffs whose ALL field level diff match $Pattern #>
+    param(
+        [Parameter(Mandatory)]
+        [string]$FilePath,
+
+        [Parameter(Mandatory)]
+        [string]$Pattern
+    )
+
+    $diff = git diff HEAD~1 -U0 --word-diff=porcelain --word-diff-regex='"[^"]*"|[{}\[\]:,]|[^{}\[\]:,\s]+' -- $FilePath |
+    Where-Object { $_ -match '^[+-]' -and $_ -notmatch '^(---|\+\+\+)' } |
+    ForEach-Object { $_ -replace '^[+-]' -replace '^"|"$' }
+
+    if (($diff | Where-Object { $_ -notmatch $Pattern }).Count -eq 0) {
+        # Unstage the file and revert to match HEAD
+        Write-Output "Skipping ${FilePath}"
+        git restore $FilePath
+    }
+}
+
+
 $HomeDir = [Environment]::GetFolderPath("UserProfile")
-$RepoDir = $TrackingRepo
-$TrackedFilesDir = $RepoDir
 $LogFile = Join-Path $PSScriptRoot "track.log"
 
 $now = Get-Date
@@ -17,9 +57,9 @@ $NowIso = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
 $NowLog = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 
 # Make sure the tracked files directory exists
-if (-not (Test-Path $TrackedFilesDir)) {
+if (-not (Test-Path $RepoDir)) {
     Write-Host -NoNewline "Creating tracked files directory..."
-    New-Item -Path $TrackedFilesDir -ItemType Directory -Force | Out-Null
+    New-Item -Path $RepoDir -ItemType Directory -Force | Out-Null
     Write-Host "Done."
 }
 
@@ -40,7 +80,7 @@ try {
             Copy-Item -Force $_.FullName $tmpDb
 
             # Output path
-            $outCsv = Join-Path $TrackedFilesDir ("firefox_${profileName}_bookmarks.csv")
+            $outCsv = Join-Path $RepoDir ("firefox_${profileName}_bookmarks.csv")
 
             # Export bookmarks:
             # - type=1 = bookmarks (not folders/livemarks)
@@ -81,11 +121,11 @@ ORDER BY bm.dateAdded ASC;
     }
 
     Write-Host "Done."
-    
-    
+
+
     # Copy Chromium bookmarks (all profiles)
     Write-Host -NoNewline "[Chromium] Copying bookmarks from all profiles... "
-    
+
     $ChromiumBrowsers = @{
         "chrome" = Join-Path $HomeDir "AppData\Local\Google\Chrome\User Data"
         "edge"   = Join-Path $HomeDir "AppData\Local\Microsoft\Edge\User Data"
@@ -113,8 +153,8 @@ ORDER BY bm.dateAdded ASC;
             # Track bookmarks
             $bookmarkPath = Join-Path $_.FullName "bookmarks"
             if (Test-Path $bookmarkPath) {
-    
-                $dst = Join-Path $TrackedFilesDir ("${browser}_${outputName}_bookmarks.json")
+
+                $dst = Join-Path $RepoDir ("${browser}_${outputName}_bookmarks.json")
                 # Redact sync metadata from bookmarks JSON file
                 Get-Content $bookmarkPath -Encoding UTF8 | ForEach-Object {
                     $_ -replace '("sync_metadata"\s*:\s*)".*?"', '$1"[redacted]"'
@@ -124,7 +164,7 @@ ORDER BY bm.dateAdded ASC;
             # Track search engines
             $webDataPath = Join-Path $_.FullName "Web Data"
             if (Test-Path $webDataPath) {
-                $searchEnginesOut = Join-Path $TrackedFilesDir ("${browser}_${outputName}_search_engines.csv")
+                $searchEnginesOut = Join-Path $RepoDir ("${browser}_${outputName}_search_engines.csv")
                 $query = 'SELECT short_name, keyword, url, is_active, date_created FROM keywords ORDER BY id ASC;'
                 $tmpDb = [System.IO.Path]::GetTempFileName()
                 Copy-Item -Force $webDataPath $tmpDb
@@ -141,7 +181,7 @@ ORDER BY bm.dateAdded ASC;
     # Export installed programs (sorted by all properties for guaranteed consistency)
     Write-Host -NoNewline "[Registry] Exporting installed programs... "
 
-    $InstalledProgramsPath = Join-Path $TrackedFilesDir "installed_programs.csv"
+    $InstalledProgramsPath = Join-Path $RepoDir "installed_programs.csv"
     $InstalledProgramsProperties = @("DisplayName", "DisplayVersion", "Publisher", "InstallDate")
     Get-ItemProperty HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*, `
         HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*, `
@@ -150,52 +190,52 @@ ORDER BY bm.dateAdded ASC;
     Select-Object $InstalledProgramsProperties |
     Sort-Object -Property $InstalledProgramsProperties |
     Export-Csv -Path $InstalledProgramsPath -NoTypeInformation -Encoding UTF8
-    
+
     write-Host "Done."
 
-    
+
     # Export installed Winget apps
     Write-Host -NoNewline "[Winget] Exporting installed apps... "
 
-    $WingetExportPath = Join-Path $TrackedFilesDir "winget_export.json"
-    winget export --output $WingetExportPath 
-    
+    $WingetExportPath = Join-Path $RepoDir "winget_export.json"
+    winget export --output $WingetExportPath
+
     Write-Host "Done."
-    
+
     # Export pipx installed apps
     Write-Host -NoNewline "[pipx] Exporting installed apps... "
 
     if (Get-Command pipx.exe -ErrorAction SilentlyContinue) {
-        $PipxExportPath = Join-Path $TrackedFilesDir "pipx_list.txt"
+        $PipxExportPath = Join-Path $RepoDir "pipx_list.txt"
         pipx list --short > $PipxExportPath
     }
-    
+
     Write-Host "Done."
-    
+
     # Export PowerShell Gallery modules (sorted by all properties for guaranteed consistency)
     Write-Host -NoNewline "[PowerShell Gallery] Exporting installed modules... "
 
-    $PsGalleryPath = Join-Path $TrackedFilesDir "ps_gallery_modules.csv"
+    $PsGalleryPath = Join-Path $RepoDir "ps_gallery_modules.csv"
     $PsGalleryProperties = @("Name", "Version", "Repository")
     # Sort by all properties to ensure consistent output
     Get-InstalledModule |
     Select-Object $PsGalleryProperties |
     Sort-Object -Property $PsGalleryProperties |
     Export-Csv -Path $PsGalleryPath -NoTypeInformation
-    
+
     Write-Host "Done."
 
 
     # Export Microsoft Store apps (sorted by all properties for guaranteed consistency)
     Write-Host -NoNewline "[Microsoft Store] Exporting installed apps... "
-    
-    $MicrosoftStorePath = Join-Path $TrackedFilesDir "microsoft_store_apps.csv"
+
+    $MicrosoftStorePath = Join-Path $RepoDir "microsoft_store_apps.csv"
     $MicrosoftStoreProperties = @("Name", "Version", "Publisher", "IsDevelopmentMode", "NonRemovable")
     Get-AppxPackage |
     Select-Object $MicrosoftStoreProperties |
     Sort-Object -Property $MicrosoftStoreProperties |
     Export-Csv -Path $MicrosoftStorePath -NoTypeInformation
-    
+
     Write-Host "Done."
 
     function Copy-HomeMirrored {
@@ -229,8 +269,7 @@ ORDER BY bm.dateAdded ASC;
         }
 
         # To add "flatten" behavior in the future, override $rel here with $src.Name
-
-        $dst = Join-Path $TrackedFilesDir $rel
+        $dst = Join-Path $RepoDir $rel
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dst) | Out-Null
 
         Copy-Item -LiteralPath $src.FullName -Destination $dst -Force
@@ -242,7 +281,7 @@ ORDER BY bm.dateAdded ASC;
     Write-Host -NoNewline "[PowerShell] Copying CurrentUserAllHosts profile script... "
     Copy-HomeMirrored ($PROFILE.CurrentUserAllHosts)
     Write-Host "Done."
-    
+
     # Copy global git config
     Write-Host -NoNewline "[Git] Copying global git config... "
     Copy-HomeMirrored (Join-Path $HomeDir ".gitconfig")
@@ -253,7 +292,7 @@ ORDER BY bm.dateAdded ASC;
     Copy-HomeMirrored (Join-Path $HomeDir ".gource-config")
     Write-Host "Done."
 
-    # assumes: $HomeDir and $TrackedFilesDir are set
+    # assumes: $HomeDir and $RepoDir are set
     Write-Host -NoNewline "[WindowsTerminal] Copying settings.json... "
     Copy-HomeMirrored (Join-Path $HomeDir "AppData\Local\Packages\Microsoft.WindowsTerminal_*\LocalState\settings.json")
     Write-Host "Done."
@@ -264,96 +303,28 @@ ORDER BY bm.dateAdded ASC;
     }
     else {
         Set-Location $RepoDir
-        
-        git add $TrackedFilesDir
-        
-        # --- Conditional Tracking --- #
-        function Remove-DiffHeaders {
-            <#
-            This filter method removes diff hunk headers from `git diff -U0` input string.
-            Example usage:
-                git diff -U0 | Remove-DiffHeaders
-            #>
-            process {
-                $headerSuffixes = @(
-                    'diff \-{2}git', # Diff header
-                    'index', # Index line
-                    '\-{3}', # Old file header
-                    '\+{3}', # New file header
-                    '@@' # Hunk header
-                )
-                $pattern = '(?m)^(' + ($headerSuffixes -join '|') + ').*?$'
-                return $_ -replace $pattern, ''
-                # -replace '^[+-]\s*$', '' # Can be used to remove empty diff lines
-                # -replace '(?m)^(@@|\+{3}|\-{3}|index|diff \-{2}git).*$', '' `
-            }
-        }
-        
-        # Check if the diff ONLY touches CreationDate in winget_export.json
+
+        # Check if the diff ONLY touches CreationDate (ISO timestamp) in winget_export.json
         # Each time you run `winget export`, it updates the CreationDate field to the current date, which is irrelevant.
-        # NOTE: Out-String is used to collapse the output which is array of lines into a single line
-        $diffWingetExport = (git diff --staged -U0 $WingetExportPath) | Out-String
-        if (($diffWingetExport `
-                    -replace '[+-]\s*"CreationDate".*', '' `
-                | Remove-DiffHeaders
-            ).Trim() -eq '') {
-            Write-Output "Skipping winget_export.json: Only CreationDate changed"
-            
-            # Unstage the file and revert to match HEAD
-            git restore --staged $WingetExportPath
-            git restore $WingetExportPath
-        }
+        Reject-Json-Diff $WingetExportPath '^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))$'
 
         # Check if the diff ONLY touches date_last_used and/or visit_count in *_bookmarks.json files
         # Those fields are updated by browsers when you visit a bookmark,
         # which is irrelevant for tracking new, modified or deleted bookmarks.
-        git diff --staged --name-only | Where-Object { $_ -match '_bookmarks\.json$' } | ForEach-Object {
-            $file = $_
-            # NOTE: Out-String is used to collapse the output which is array of lines into a single line
-            $diff = (git diff --staged -U0 $file) | Out-String 
-
-            if (($diff `
-                        -replace '(?m)^[+-]\s*"date_last_used"\s*:\s*".*?",?\s*$', '' `
-                        -replace '(?m)^[+-]\s*"visit_count"\s*:\s*\d+,?\s*$', '' `
-                    | Remove-DiffHeaders
-                ).Trim() -eq '') {
-                Write-Output "Skipping ${file}: Only date_last_used and/or visit_count changed"
-                   
-                # Unstage the file and revert to match HEAD
-                git restore --staged $file
-                git restore $file
-            }
+        git diff --name-only | Where-Object { $_ -match '_bookmarks\.json$' } | ForEach-Object {
+            # Match hash changes or numeric only changes (unix timestamps)
+            Reject-Json-Diff $_ '^([0-9a-fA-F]{8,64}|\d+(\.\d+)*?)$'
         }
-        
+
         # Check if the diff ONLY touches Winget.Source in microsoft_store_apps.csv
-        # Microsoft.Winget.Source is an MSIX file that contains a pre-indexed snapshot 
+        # Microsoft.Winget.Source is an MSIX file that contains a pre-indexed snapshot
         # of the Winget community repository (basically a compressed SQLite DB with all the manifests).
         # Due to its update frequency (couple of times per day) and irrelevance, it is ignored.
-        $diffMicrosoftStore = (git diff --staged -U0 $MicrosoftStorePath) | Out-String
-        if (($diffMicrosoftStore `
-                    -replace '(?m)^[+-]\s*".*Microsoft\.Winget\.Source".*$', '' |
-                Remove-DiffHeaders).Trim() -eq '') {
-            Write-Output 'Skipping microsoft_store_apps.csv: only Winget.Source bumped'
-            git restore --staged $MicrosoftStorePath
-            git restore $MicrosoftStorePath
-        }
+        Reject-Csv-Diff $MicrosoftStorePath '^[\d.]+$'
 
-        # Get the number of modified files and untracked files in the staging area:
-        # | Letter | Meaning                                         |
-        # | ------ | ----------------------------------------------- |
-        # | `A`    | Added (new files)                               |
-        # | `C`    | Copied                                          |
-        # | `D`    | Deleted                                         |
-        # | `M`    | Modified                                        |
-        # | `R`    | Renamed                                         |
-        # | `T`    | Type changed (e.g., file <-> symlink)           |
-        # | `U`    | Unmerged (conflicts)                            |
-        # | `X`    | Unknown (e.g., not tracked in the index)        |
-        # | `B`    | Broken pairing (used for rename/copy detection) |
-        $modifiedFilesCount = (git diff --cached --name-only --diff-filter=M | Measure-Object).Count
-        $untrackedFilesCount = (git diff --cached --name-only --diff-filter=A | Measure-Object).Count
+        git add $RepoDir
         $stagingFilesCount = (git diff --cached --name-only | Measure-Object).Count
-        
+
         # get the number of changed files and untracked files expanding untracked directories
         git commit -m "Scheduled tracking at $NowIso"
         git push origin main
@@ -364,12 +335,12 @@ ORDER BY bm.dateAdded ASC;
     }
 
     Write-Host "Tracking complete."
-    
+
     # --- Toast Notifications (Windows 10+ style) --- #
     $nextRun = $now.Date.AddHours(4 * [math]::Ceiling($now.Hour / 4))
     if ($nextRun -le $now) { $nextRun = $nextRun.AddHours(4) }
     $nextRunStr = $nextRun.ToString('H:mm')
-    
+
     # Get latest commit hash for toast link
     $originUrl = git remote get-url origin
     $repoUrl = $originUrl -replace '\.git$', ''
@@ -377,7 +348,7 @@ ORDER BY bm.dateAdded ASC;
     $commitUrl = if ($stagingFilesCount -gt 0) { "$repoUrl/commit/$commitHash" } else { "" }
 
     $attribution = if ($stagingFilesCount -gt 0) { "Click to open commit on Github" } else { "" }
-    
+
     $xml = @"
 <toast activationType="protocol" launch="$commitUrl" duration="short">
   <visual>
