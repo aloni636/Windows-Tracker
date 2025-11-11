@@ -1,5 +1,10 @@
 # This script initializes the Git repo, sets up directory structure and registers scheduled tracking tasks.
 
+function Write-Deploy {
+    param([Parameter(Mandatory)][string] $Message)
+    Write-Host "[deploy] $Message"
+}
+
 # Elevation check: Relaunch as admin if not already
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     Write-Host "Script requires admin to register tasks to the scheduler. Relaunching with sudo..."
@@ -13,6 +18,7 @@ if ($PSVersionTable.PSEdition -ne 'Desktop') {
 }
 
 # Ensure Git is installed
+Write-Deploy "Validating git.exe installation..."
 if (-not (Get-Command git.exe -ErrorAction SilentlyContinue)) {
     Write-Host "Git not found. Installing via winget..."
     winget install --id=Git.Git --silent --accept-package-agreements --accept-source-agreements
@@ -21,6 +27,7 @@ if (-not (Get-Command git.exe -ErrorAction SilentlyContinue)) {
     }
 }
 
+Write-Deploy "Loading config file '.\config.psd1'"
 # Ensure config file exists, prompt 
 if (-not (Test-Path ".\config.psd1")) {
     throw "Config file .\config.psd1 was not found. Create it with schema from .\config.example.psd1 and run again."
@@ -41,6 +48,7 @@ if (-not (Test-Path (Join-Path $TrackingRepo ".git"))) {
 }
 
 # Ensure SQLite is installed
+Write-Deploy "Validating sqlite3.exe installation..."
 if (-not (Get-Command sqlite3.exe -ErrorAction SilentlyContinue)) {
     Write-Host "SQLite not found. Installing via winget..."
     winget install --id=SQLite.sqlite --silent --accept-package-agreements --accept-source-agreements
@@ -54,7 +62,8 @@ if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
     Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 }
 # cleanup deployment and copy track.ps1 to deployment
-Get-ChildItem $Config.Deployment -Recurse -Force | Remove-Item -Recurse -Force
+Write-Deploy "Cleaning up '${Deployment}'"
+Get-ChildItem $Deployment -Recurse -Force | Remove-Item -Recurse -Force
 Copy-Item (Join-Path $PSScriptRoot "track.ps1") -Destination $Deployment -Force
 
 # Point $ScriptPath to deployment version
@@ -65,6 +74,7 @@ $VbsPath = Join-Path $Deployment "launch_hidden.vbs"
 # We are using vbs script to launch PowerShell in hidden mode.
 # as -WindowStyle Hidden actually minimizes window, not hidding it.
 # See: https://github.com/PowerShell/PowerShell/issues/3028
+Write-Deploy "Creating VBS hidden PS1 launcher script..."
 @"
 Set objShell = CreateObject("Wscript.Shell")
 objShell.Run "powershell.exe -ExecutionPolicy Bypass -File ""$escapedScriptPath"" -RepoDir ""$TrackingRepo""", 0, False
@@ -97,6 +107,7 @@ $Settings = New-ScheduledTaskSettingsSet `
     -ExecutionTimeLimit (New-TimeSpan -Minutes 3)
 
 # Register the task
+Write-Deploy "Registring task..."
 Register-ScheduledTask -Action $Action `
     -Trigger @($Trigger1, $Trigger2) `
     -Principal $Principal `
@@ -105,7 +116,7 @@ Register-ScheduledTask -Action $Action `
     -Description "$TaskName info every 4 hours and at logon (non-admin)" `
     -Force
 
-Write-Host @"
+Write-Deploy @"
 
 Setup complete.
 
