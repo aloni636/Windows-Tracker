@@ -5,6 +5,33 @@ function Write-Deploy {
     Write-Host "[deploy] $Message"
 }
 
+function Import-PowerShellDataFile-With-Validation {
+    param(
+        [Parameter(Mandatory)]
+        [string] $Path,
+
+        [Parameter(Mandatory)]
+        [string[]] $RequiredKeys
+    )
+
+    if (-not (Test-Path $Path)) {
+        $req = $RequiredKeys -join ", "
+        throw "Data file not found: $Path. Required keys: $req"
+    }
+
+    $data = Import-PowerShellDataFile -Path $Path
+
+    $missing = $RequiredKeys | Where-Object { -not $data.ContainsKey($_) }
+
+    if ($missing.Count -gt 0) {
+        $req = $RequiredKeys -join ", "
+        $miss = $missing -join ", "
+        throw "Missing required keys in '$Path'. Required: $req. Missing: $miss"
+    }
+
+    return $data
+}
+
 # Elevation check: Relaunch as admin if not already
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     Write-Host "Script requires admin to register tasks to the scheduler. Relaunching with sudo..."
@@ -28,11 +55,10 @@ if (-not (Get-Command git.exe -ErrorAction SilentlyContinue)) {
 }
 
 Write-Deploy "Loading config file '.\config.psd1'"
-# Ensure config file exists, prompt 
-if (-not (Test-Path ".\config.psd1")) {
-    throw "Config file .\config.psd1 was not found. Create it with schema from .\config.example.psd1 and run again."
-}
-$Config = Import-PowerShellDataFile -Path ".\config.psd1"
+$Config = Import-PowerShellDataFile-With-Validation -Path ".\config.psd1" -RequiredKeys @(
+    "TrackingRepo",
+    "Deployment"
+)
 $TrackingRepo = Resolve-Path $Config.TrackingRepo
 $Deployment = New-Item -ItemType Directory -Path $Config.Deployment -Force
 $TaskName = "Windows-Tracking"
