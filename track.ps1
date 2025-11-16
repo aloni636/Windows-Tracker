@@ -316,11 +316,11 @@ ORDER BY bm.dateAdded ASC;
             Reject-Json-Diff $_ '^([0-9a-fA-F]{8,64}|\d+(\.\d+)*?)$'
         }
 
-        # Check if the diff ONLY touches Winget.Source in microsoft_store_apps.csv
-        # Microsoft.Winget.Source is an MSIX file that contains a pre-indexed snapshot
-        # of the Winget community repository (basically a compressed SQLite DB with all the manifests).
-        # Due to its update frequency (couple of times per day) and irrelevance, it is ignored.
+        # Reject diffs which only affect version numbers or dates
         Reject-Csv-Diff $MicrosoftStorePath '^[\d.]+$'
+        
+        # Reject diffs which only affect version numbers or dates
+        Reject-Csv-Diff $InstalledProgramsPath '^[\d.]+$'
 
         git add $RepoDir
         $stagingFilesCount = (git diff --cached --name-only | Measure-Object).Count
