@@ -16,7 +16,8 @@ function Reject-Csv-Diff {
         [string]$Pattern
     )
 
-    $diff = git diff HEAD~1 -U0 --word-diff=porcelain --word-diff-regex='[^,]+' -- $FilePath |
+    # Diff should accommodate for package names which include version numbers
+    $diff = git diff -U0 --word-diff=porcelain --word-diff-regex='[^"[:space:]]+' -- $FilePath |
     Where-Object { $_ -match '^[+-]' -and $_ -notmatch '^(---|\+\+\+)' } |
     ForEach-Object { $_ -replace '^[+-]' -replace '^"|"$' }
 
@@ -37,7 +38,7 @@ function Reject-Json-Diff {
         [string]$Pattern
     )
 
-    $diff = git diff HEAD~1 -U0 --word-diff=porcelain --word-diff-regex='"[^"]*"|[{}\[\]:,]|[^{}\[\]:,\s]+' -- $FilePath |
+    $diff = git diff -U0 --word-diff=porcelain --word-diff-regex='"[^"]*"|[{}\[\]:,]|[^{}\[\]:,\s]+' -- $FilePath |
     Where-Object { $_ -match '^[+-]' -and $_ -notmatch '^(---|\+\+\+)' } |
     ForEach-Object { $_ -replace '^[+-]' -replace '^"|"$' }
 
