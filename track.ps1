@@ -298,6 +298,11 @@ ORDER BY bm.dateAdded ASC;
     Copy-HomeMirrored (Join-Path $HomeDir "AppData\Local\Packages\Microsoft.WindowsTerminal_*\LocalState\settings.json")
     Write-Host "Done."
 
+    # Copy .wslconfig
+    Write-Host -NoNewline "[WSL] Copying .wslconfig... "
+    Copy-HomeMirrored (Join-Path $HomeDir ".wslconfig")
+    Write-Host "Done."
+
     # --- Push Changes To Github --- #
     if ($DisableGit) {
         Write-Host "Git operations are disabled. Skipping commit and push."
