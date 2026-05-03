@@ -5,3 +5,6 @@ Currently it keep track of **bookmarks** for Chrome, Edge and Firefox, and **ins
 
 ## Setup
 Clone the repo, create a `config.psd1` based on `config.example.psd1`, and execute `.\setup.ps1`.
+
+## Experiment
+`.\track.ps1 -DisableGit -RepoDir .\TestRepo\`

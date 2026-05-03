@@ -54,6 +54,13 @@ if (-not (Get-Command git.exe -ErrorAction SilentlyContinue)) {
     }
 }
 
+# Ensure Voicemeeter module is installed
+Write-Deploy "Validating Voicemeeter module installation..."
+if (-not (Get-Module -ListAvailable -Name Voicemeeter)) {
+    Write-Deploy "Installing Voicemeeter API wrapper."
+    Install-Module -Name Voicemeeter -Scope CurrentUser
+}
+
 Write-Deploy "Loading config file '.\config.psd1'"
 $Config = Import-PowerShellDataFile-With-Validation -Path ".\config.psd1" -RequiredKeys @(
     "TrackingRepo",
@@ -91,6 +98,7 @@ if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
 Write-Deploy "Cleaning up '${Deployment}'"
 Get-ChildItem $Deployment -Recurse -Force | Remove-Item -Recurse -Force
 Copy-Item (Join-Path $PSScriptRoot "track.ps1") -Destination $Deployment -Force
+Copy-Item (Join-Path $PSScriptRoot "Tracker") -Destination $Deployment -Force -Recurse
 
 # Point $ScriptPath to deployment version
 $ScriptPath = Join-Path $Deployment "track.ps1"

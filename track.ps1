@@ -4,6 +4,8 @@ param(
     [string]$RepoDir
 )
 
+Import-Module .\Tracker\Voicemeeter-Tracker.psm1 -DisableNameChecking
+
 # --- Functions --- #
 # Conditional Tracking
 function Reject-Csv-Diff {
@@ -323,6 +325,11 @@ ORDER BY bm.dateAdded ASC;
     Mirror-Home-File (Join-Path $HomeDir ".wslconfig")
     Write-Host "Done."
 
+    Write-Host -NoNewline "[Voicemeeter] Exporting profile... "
+    $VoicemeeterPath = Join-Path $RepoDir "VoicemeeterProfile.xml"
+    Track-Voicemeeter ($VoicemeeterPath)
+    Write-Host "Done."
+
     # --- Push Changes To Github --- #
     if ($DisableGit) {
         Write-Host "Git operations are disabled. Skipping commit and push."
@@ -330,6 +337,7 @@ ORDER BY bm.dateAdded ASC;
     else {
         Set-Location $RepoDir
 
+        # TODO: Use (load -> set diff -> gate) with ignored fields for a more robust commit rejection.
         # Check if the diff ONLY touches CreationDate (ISO timestamp) in winget_export.json
         # Each time you run `winget export`, it updates the CreationDate field to the current date, which is irrelevant.
         Reject-Json-Diff $WingetExportPath '^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))$'
@@ -344,7 +352,7 @@ ORDER BY bm.dateAdded ASC;
 
         # Reject diffs which only affect version numbers or dates
         Reject-Csv-Diff $MicrosoftStorePath '^[\d.]+$'
-        
+
         # Reject diffs which only affect version numbers or dates
         Reject-Csv-Diff $InstalledProgramsPath '^[\d.]+$'
 
